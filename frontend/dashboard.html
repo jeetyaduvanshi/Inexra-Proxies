@@ -51,6 +51,15 @@
       <span id="refresh-icon">🔄</span>
       <span>Refresh</span>
     </button>
+    <button class="btn btn-secondary btn-sm" onclick="exportBackupData()" title="Download a JSON backup of your proxies">
+      <span>💾</span>
+      <span>Backup</span>
+    </button>
+    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('import-file-input').click()" title="Restore proxies from a backup JSON file">
+      <span>📂</span>
+      <span>Restore</span>
+    </button>
+    <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="handleImportBackup(event)" />
     <div class="user-pill" id="user-badge" title="Logged in user">
       <span>👤</span>
       <span id="user-name">User</span>

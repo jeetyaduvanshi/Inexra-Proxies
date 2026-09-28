@@ -1644,3 +1644,60 @@ function escapeAttr(str) {
   if (!str) return '';
   return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+
+// ── Backup Export & Import (Pure Browser Storage) ──────────────
+async function exportBackupData() {
+  try {
+    const res = await API.exportBackup();
+    if (!res.success || !res.data) {
+      showToast('Failed to export backup.', 'error');
+      return;
+    }
+
+    const jsonStr = JSON.stringify(res.data, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `inexra-proxies-backup-${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast(`✓ Backup downloaded successfully (${res.data.proxies.length} proxies).`, 'success');
+  } catch (err) {
+    console.error('Export error:', err);
+    showToast('Failed to export backup.', 'error');
+  }
+}
+
+async function handleImportBackup(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+
+    if (!parsed || !Array.isArray(parsed.proxies)) {
+      showToast('Invalid backup file. Missing proxies array.', 'error');
+      return;
+    }
+
+    const res = await API.importBackup(parsed);
+    if (res.success) {
+      showToast(res.message || 'Proxies restored successfully.', 'success');
+      await loadData();
+    } else {
+      showToast(res.message || 'Import failed.', 'error');
+    }
+  } catch (err) {
+    console.error('Import error:', err);
+    showToast('Failed to read or parse backup JSON file.', 'error');
+  } finally {
+    event.target.value = ''; // Reset file input
+  }
+}
+
