@@ -67,6 +67,30 @@ body.box-app-body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ── Sleek Dark Scrollbar (Completely eliminate horizontal scrollbar) ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 0px !important;
+}
+
+::-webkit-scrollbar:horizontal {
+  display: none !important;
+  height: 0px !important;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #242e3d;
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #38bdf8;
+}
+
 button {
   cursor: pointer;
   font-family: inherit;
@@ -818,10 +842,16 @@ select option {
   min-width: 0;
   max-height: 400px;
   overflow-y: auto;
-  overflow-x: auto;
+  overflow-x: hidden; /* Removed horizontal scrollbar line completely! */
   background: #080c14;
   border-right: 1px solid var(--border-subtle);
   padding: 4px 0;
+}
+
+.proxy-text-pane::-webkit-scrollbar:horizontal,
+.box-unified-table::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
 }
 
 .p-line {
@@ -888,6 +918,8 @@ select option {
   font-size: 0.78rem;
   color: var(--text-primary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: text;
   -webkit-user-select: text;
   flex: 1;
@@ -908,6 +940,7 @@ select option {
   flex-shrink: 0;
   max-height: 400px;
   overflow-y: auto;
+  overflow-x: hidden;
   background: #0f1520;
   padding: 4px 8px;
   display: flex;
