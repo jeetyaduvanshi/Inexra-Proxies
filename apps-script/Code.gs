@@ -77,17 +77,28 @@ function generateSessionToken() {
   return token;
 }
 
-// ── Password Hashing ──────────────────────────────────────────
+// ── Password Handling (Plain Text) ───────────────────────────
 function hashPassword(plaintext) {
-  var salted = PASSWORD_SALT + plaintext;
-  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salted, Utilities.Charset.UTF_8);
-  return bytes.map(function(b) {
-    return (b < 0 ? b + 256 : b).toString(16).padStart(2, '0');
-  }).join('');
+  // Store directly in plain text (no hashing)
+  return String(plaintext);
 }
 
-function verifyPassword(plaintext, storedHash) {
-  return hashPassword(plaintext) === storedHash;
+function verifyPassword(plaintext, stored) {
+  var p = String(plaintext);
+  var s = String(stored);
+  if (p === s) return true;
+
+  // Fallback for legacy SHA-256 hash if any row has not been converted yet
+  try {
+    var salted = PASSWORD_SALT + p;
+    var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salted, Utilities.Charset.UTF_8);
+    var legacyHash = bytes.map(function(b) {
+      return (b < 0 ? b + 256 : b).toString(16).padStart(2, '0');
+    }).join('');
+    if (s === legacyHash) return true;
+  } catch (e) {}
+
+  return false;
 }
 
 // ── Time & JSON Responses ─────────────────────────────────────
