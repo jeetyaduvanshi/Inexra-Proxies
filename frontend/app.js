@@ -320,9 +320,8 @@ function renderBoxHtml(group) {
   const selectedInThisBox = displayProxies.filter(p => AppState.selectedIds.has(p.id));
   const hasSelection = selectedInThisBox.length > 0;
 
-  // Has available proxies
-  const availProxies = displayProxies.filter(p => p.status === 'available');
-  const allAvailSelected = availProxies.length > 0 && availProxies.every(p => AppState.selectedIds.has(p.id));
+  // "Select All" is checked when all currently displayed proxies in this box are selected
+  const allSelected = displayProxies.length > 0 && displayProxies.every(p => AppState.selectedIds.has(p.id));
 
   return `
     <div class="proxy-box" id="box-${escapeAttr(key)}">
@@ -342,11 +341,16 @@ function renderBoxHtml(group) {
         </div>
       </div>
 
-      <!-- Box Action Bar (Bulk Copy & Paste) -->
+      <!-- Box Action Bar (Bulk Copy, Paste, and Empty Box) -->
       <div class="box-toolbar">
-        <button class="btn btn-xs btn-paste-toggle ${isPasteOpen ? 'active' : ''}" onclick="toggleInlinePaste('${escapeAttr(key)}')">
-          <span>${isPasteOpen ? '✕ Close Paste' : '➕ Paste Proxies'}</span>
-        </button>
+        <div class="box-toolbar-left">
+          <button class="btn btn-xs btn-paste-toggle ${isPasteOpen ? 'active' : ''}" onclick="toggleInlinePaste('${escapeAttr(key)}')">
+            <span>${isPasteOpen ? '✕ Close Paste' : '➕ Paste Proxies'}</span>
+          </button>
+          <button class="btn btn-xs btn-empty-box" onclick="emptyEntireBox('${escapeAttr(key)}')" ${totalInBox === 0 ? 'disabled' : ''} title="Clear/Empty all proxies in this box">
+            <span>🗑 Empty Box</span>
+          </button>
+        </div>
 
         <div class="bulk-copy-group">
           <button class="btn btn-xs btn-copy-bulk" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', 1)" ${availInBox === 0 ? 'disabled' : ''} title="Copy 1 available proxy and mark as used">
@@ -360,6 +364,50 @@ function renderBoxHtml(group) {
           </button>
           <button class="btn btn-xs btn-copy-bulk btn-copy-all" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', ${availInBox})" ${availInBox === 0 ? 'disabled' : ''} title="Copy all available proxies in this box">
             📋 Copy All (${availInBox})
+          </button>
+        </div>
+      </div>
+
+      <!-- Range Copy Bar (Specify Serial Number Range) -->
+      <div class="box-range-bar">
+        <span class="range-label">Range Copy:</span>
+        <div class="range-inputs-group">
+          <span class="range-prefix">#</span>
+          <input
+            type="number"
+            id="range-from-${escapeAttr(key)}"
+            class="range-input"
+            min="1"
+            max="${displayProxies.length || 1}"
+            value="1"
+            placeholder="1"
+          />
+          <span class="range-sep">to</span>
+          <span class="range-prefix">#</span>
+          <input
+            type="number"
+            id="range-to-${escapeAttr(key)}"
+            class="range-input"
+            min="1"
+            max="${displayProxies.length || 1}"
+            value="${Math.min(5, displayProxies.length || 1)}"
+            placeholder="${Math.min(5, displayProxies.length || 1)}"
+          />
+          <button
+            class="btn btn-xs btn-range-copy"
+            onclick="copyRangeInBox('${escapeAttr(key)}')"
+            ${displayProxies.length === 0 ? 'disabled' : ''}
+            title="Copy proxies in this serial range and mark as used"
+          >
+            📋 Copy Range
+          </button>
+          <button
+            class="btn btn-xs btn-range-select"
+            onclick="selectRangeInBox('${escapeAttr(key)}')"
+            ${displayProxies.length === 0 ? 'disabled' : ''}
+            title="Select proxies in this serial range"
+          >
+            ☑ Select Range
           </button>
         </div>
       </div>
@@ -392,10 +440,13 @@ function renderBoxHtml(group) {
           <span class="selection-count">Selected: <strong>${selectedInThisBox.length}</strong></span>
           <div style="display:flex; gap:6px;">
             <button class="btn btn-xs btn-primary" onclick="copySelectedInBox('${escapeAttr(key)}')">
-              📋 Copy Selected (${selectedInThisBox.length})
+              📋 Copy (${selectedInThisBox.length})
             </button>
             <button class="btn btn-xs btn-secondary" onclick="resetSelectedInBox('${escapeAttr(key)}')">
-              ↺ Reset
+              ↺ Reset (${selectedInThisBox.length})
+            </button>
+            <button class="btn btn-xs btn-danger-outline" onclick="deleteSelectedInBox('${escapeAttr(key)}')">
+              🗑 Delete (${selectedInThisBox.length})
             </button>
             <button class="btn btn-xs btn-ghost" onclick="clearSelectionInBox('${escapeAttr(key)}')">
               ✕
@@ -404,32 +455,42 @@ function renderBoxHtml(group) {
         </div>
       ` : ''}
 
-      <!-- Select All Header Row -->
+      <!-- Select All Header Row (ALWAYS ENABLED when proxies exist) -->
       <div class="box-select-row">
         <label class="select-all-label">
           <input
             type="checkbox"
             class="proxy-checkbox"
-            ${allAvailSelected ? 'checked' : ''}
-            ${availProxies.length === 0 ? 'disabled' : ''}
-            onchange="toggleSelectAllAvailInBox('${escapeAttr(key)}', this.checked)"
+            ${allSelected ? 'checked' : ''}
+            ${displayProxies.length === 0 ? 'disabled' : ''}
+            onchange="toggleSelectAllInBox('${escapeAttr(key)}', this.checked)"
           />
-          <span>Select all available (${availProxies.length})</span>
+          <span>Select All (${displayProxies.length})</span>
         </label>
-        <span class="text-xs text-muted">${displayProxies.length} proxies showing</span>
+        <div class="box-select-actions">
+          <button
+            class="btn-box-reset-all"
+            onclick="resetAllInBox('${escapeAttr(key)}')"
+            ${displayProxies.length === 0 ? 'disabled' : ''}
+            title="Reset all proxies in this box to Available & 0 copies"
+          >
+            ↺ Reset All (${displayProxies.length})
+          </button>
+          <span class="text-xs text-muted">${displayProxies.length} proxies</span>
+        </div>
       </div>
 
-      <!-- Proxy List Rows -->
+      <!-- Proxy List Rows with Serial Numbers -->
       <div class="box-list">
         ${displayProxies.length === 0 ? `
           <div class="box-empty-hint">No proxies matching current filter.</div>
-        ` : displayProxies.map(p => renderProxyRowHtml(p)).join('')}
+        ` : displayProxies.map((p, idx) => renderProxyRowHtml(p, idx + 1)).join('')}
       </div>
     </div>
   `;
 }
 
-function renderProxyRowHtml(p) {
+function renderProxyRowHtml(p, serialNum = 1) {
   const isAvailable = p.status === 'available';
   const isSelected = AppState.selectedIds.has(p.id);
   const isRecent = AppState.recentlyCopiedIds.has(p.id);
@@ -440,7 +501,7 @@ function renderProxyRowHtml(p) {
 
   return `
     <div class="proxy-row ${isAvailable ? 'row-avail' : 'row-used'} ${isRecent ? 'row-anim-copied' : ''}" id="prow-${escapeAttr(p.id)}">
-      <!-- Left: Checkbox + Status dot + Proxy String -->
+      <!-- Left: Checkbox + Serial # + Status dot + Proxy String -->
       <div class="proxy-row-left">
         <input
           type="checkbox"
@@ -449,6 +510,8 @@ function renderProxyRowHtml(p) {
           onchange="toggleProxySelection('${escapeAttr(p.id)}', this.checked)"
           title="Select proxy"
         />
+
+        <span class="proxy-serial" title="Serial #${serialNum}">#${serialNum}</span>
 
         <span class="status-indicator ${isAvailable ? 'status-avail' : 'status-used'}" title="${isAvailable ? 'Available' : 'Used'}">
           ${isAvailable ? '🟢 Avail' : '🔴 Used'}
@@ -463,7 +526,7 @@ function renderProxyRowHtml(p) {
       <div class="proxy-row-right">
         <div class="proxy-meta-info">
           <span class="meta-copied-count ${copyCount > 0 ? 'highlight' : ''}" title="Total times copied">
-            ${copyCount > 0 ? `Copied ${copyCount}×` : 'Never copied'}
+            ${copyCount > 0 ? `Copied ${copyCount}×` : 'Copied 0×'}
           </span>
           ${usedTimeFormatted ? `
             <span class="meta-used-time" title="Last used timestamp: ${escapeAttr(p.used_at)}">
@@ -478,7 +541,7 @@ function renderProxyRowHtml(p) {
           <button class="btn-row-action btn-row-copy" onclick="copySingleProxy('${escapeAttr(p.id)}')" title="Copy proxy and mark as Used">
             📋 Copy
           </button>
-          <button class="btn-row-action btn-row-reset" onclick="resetSingleProxy('${escapeAttr(p.id)}')" title="Reset status to Available">
+          <button class="btn-row-action btn-row-reset" onclick="resetSingleProxy('${escapeAttr(p.id)}')" title="Reset to Available and 0 copies">
             ↺
           </button>
           <button class="btn-row-action btn-row-del" onclick="deleteSingleProxy('${escapeAttr(p.id)}')" title="Delete this proxy">
@@ -626,17 +689,113 @@ async function executeCopyAndMarkUsed(ids, strings, label) {
   }
 }
 
-// ── Reset & Delete Handlers ────────────────────────────────────
+// ── Helper: Get Display Proxies for a Box ──────────────────────
+function getBoxDisplayProxies(boxKey) {
+  const [country, provider] = boxKey.split('___');
+  let proxies = AppState.proxies.filter(p =>
+    p.status !== 'deleted' &&
+    p.country.toUpperCase() === country &&
+    p.provider === provider
+  );
+
+  if (AppState.filters.status) {
+    proxies = proxies.filter(p => p.status === AppState.filters.status);
+  }
+  const search = AppState.filters.search;
+  if (search) {
+    proxies = proxies.filter(p =>
+      (p.proxy && p.proxy.toLowerCase().includes(search)) ||
+      (p.provider && p.provider.toLowerCase().includes(search)) ||
+      (p.country && p.country.toLowerCase().includes(search))
+    );
+  }
+  return proxies;
+}
+
+// ── Range Copy & Range Select ──────────────────────────────────
+/**
+ * Copy a serial-number range of proxies (e.g. #1 to #5) from a box
+ */
+async function copyRangeInBox(boxKey) {
+  const list = getBoxDisplayProxies(boxKey);
+  if (list.length === 0) {
+    showToast('No proxies to copy in this box.', 'error');
+    return;
+  }
+
+  const fromInput = document.getElementById(`range-from-${boxKey}`);
+  const toInput = document.getElementById(`range-to-${boxKey}`);
+
+  let fromVal = parseInt(fromInput ? fromInput.value : '1', 10);
+  let toVal = parseInt(toInput ? toInput.value : '1', 10);
+
+  if (isNaN(fromVal) || fromVal < 1) fromVal = 1;
+  if (isNaN(toVal) || toVal < 1) toVal = 1;
+  if (fromVal > list.length) fromVal = list.length;
+  if (toVal > list.length) toVal = list.length;
+
+  if (fromVal > toVal) {
+    const tmp = fromVal;
+    fromVal = toVal;
+    toVal = tmp;
+  }
+
+  const slice = list.slice(fromVal - 1, toVal);
+  if (slice.length === 0) {
+    showToast('Invalid range selected.', 'error');
+    return;
+  }
+
+  const ids = slice.map(p => p.id);
+  const strings = slice.map(p => p.proxy.trim());
+
+  await executeCopyAndMarkUsed(ids, strings, `range #${fromVal}–#${toVal} (${slice.length} proxies)`);
+}
+
+/**
+ * Select a serial-number range of proxies in a box
+ */
+function selectRangeInBox(boxKey) {
+  const list = getBoxDisplayProxies(boxKey);
+  if (list.length === 0) return;
+
+  const fromInput = document.getElementById(`range-from-${boxKey}`);
+  const toInput = document.getElementById(`range-to-${boxKey}`);
+
+  let fromVal = parseInt(fromInput ? fromInput.value : '1', 10);
+  let toVal = parseInt(toInput ? toInput.value : '1', 10);
+
+  if (isNaN(fromVal) || fromVal < 1) fromVal = 1;
+  if (isNaN(toVal) || toVal < 1) toVal = 1;
+  if (fromVal > list.length) fromVal = list.length;
+  if (toVal > list.length) toVal = list.length;
+
+  if (fromVal > toVal) {
+    const tmp = fromVal;
+    fromVal = toVal;
+    toVal = tmp;
+  }
+
+  const slice = list.slice(fromVal - 1, toVal);
+  slice.forEach(p => AppState.selectedIds.add(p.id));
+
+  renderBoxes();
+  showToast(`Selected range #${fromVal} to #${toVal} (${slice.length} proxies).`, 'info');
+}
+
+// ── Reset Handlers (Always Reset Copy Count to 0) ──────────────
 async function resetSingleProxy(proxyId) {
-  // Optimistically update UI immediately
+  // Optimistically update UI immediately: status=available, copy_count=0
   const item = AppState.proxies.find(p => p.id === proxyId);
   if (item) {
     item.status = 'available';
     item.used_at = '';
+    item.last_copied_at = '';
+    item.copy_count = 0;
   }
   updateHeaderStats();
   renderBoxes();
-  showToast('Proxy reset to Available.', 'success');
+  showToast('✓ Proxy reset to Available (0 copies).', 'success');
 
   // Background sync
   try {
@@ -655,18 +814,20 @@ async function resetSelectedInBox(boxKey) {
 
   const ids = selected.map(p => p.id);
 
-  // Optimistically update UI immediately
+  // Optimistically update UI immediately: status=available, copy_count=0
   ids.forEach(id => {
     const item = AppState.proxies.find(p => p.id === id);
     if (item) {
       item.status = 'available';
       item.used_at = '';
+      item.last_copied_at = '';
+      item.copy_count = 0;
     }
     AppState.selectedIds.delete(id);
   });
   updateHeaderStats();
   renderBoxes();
-  showToast(`✓ ${ids.length} proxies reset to Available.`, 'success');
+  showToast(`✓ ${ids.length} proxies reset to Available (0 copies).`, 'success');
 
   // Background sync
   try {
@@ -676,6 +837,42 @@ async function resetSelectedInBox(boxKey) {
   }
 }
 
+async function resetAllInBox(boxKey) {
+  const [country, provider] = boxKey.split('___');
+  const inBox = AppState.proxies.filter(p =>
+    p.status !== 'deleted' &&
+    p.country.toUpperCase() === country &&
+    p.provider === provider
+  );
+
+  if (inBox.length === 0) return;
+  const ids = inBox.map(p => p.id);
+
+  // Optimistically update UI immediately: status=available, copy_count=0
+  ids.forEach(id => {
+    const item = AppState.proxies.find(p => p.id === id);
+    if (item) {
+      item.status = 'available';
+      item.used_at = '';
+      item.last_copied_at = '';
+      item.copy_count = 0;
+    }
+    AppState.selectedIds.delete(id);
+  });
+
+  updateHeaderStats();
+  renderBoxes();
+  showToast(`✓ All ${ids.length} proxies reset to Available (0 copies).`, 'success');
+
+  // Background sync
+  try {
+    await API.resetMultipleProxies(ids);
+  } catch (err) {
+    console.warn('Reset all background sync error:', err);
+  }
+}
+
+// ── Delete & Empty Handlers ────────────────────────────────────
 async function deleteSingleProxy(proxyId) {
   if (!confirm('Are you sure you want to delete this proxy?')) return;
 
@@ -697,6 +894,68 @@ async function deleteSingleProxy(proxyId) {
   }
 }
 
+async function deleteSelectedInBox(boxKey) {
+  const selected = AppState.proxies.filter(p => AppState.selectedIds.has(p.id) && p.status !== 'deleted');
+  if (selected.length === 0) return;
+
+  if (!confirm(`Are you sure you want to delete ${selected.length} selected proxies?`)) return;
+
+  const ids = selected.map(p => p.id);
+
+  // Optimistically update UI immediately
+  AppState.proxies = AppState.proxies.filter(p => !AppState.selectedIds.has(p.id));
+  ids.forEach(id => AppState.selectedIds.delete(id));
+
+  updateHeaderStats();
+  renderBoxes();
+  showToast(`✓ ${ids.length} proxies deleted.`, 'success');
+
+  // Background sync
+  try {
+    await API.deleteMultipleProxies(ids);
+  } catch (err) {
+    console.warn('Delete multiple background sync error:', err);
+  }
+}
+
+async function emptyEntireBox(boxKey) {
+  const [country, provider] = boxKey.split('___');
+  const inBox = AppState.proxies.filter(p =>
+    p.status !== 'deleted' &&
+    p.country.toUpperCase() === country &&
+    p.provider === provider
+  );
+
+  if (inBox.length === 0) {
+    showToast('Box is already empty.', 'info');
+    return;
+  }
+
+  const cInfo = getCountry(country);
+  if (!confirm(`Are you sure you want to EMPTY this box?\n\nThis will permanently delete all ${inBox.length} proxies for ${cInfo.name} (${provider}).`)) {
+    return;
+  }
+
+  const ids = inBox.map(p => p.id);
+
+  // Optimistic UI update
+  AppState.proxies = AppState.proxies.filter(p =>
+    !(p.country.toUpperCase() === country && p.provider === provider)
+  );
+  ids.forEach(id => AppState.selectedIds.delete(id));
+
+  updateHeaderStats();
+  renderBoxes();
+  showToast(`✓ Emptied box (${ids.length} proxies deleted).`, 'success');
+
+  // Background sync
+  try {
+    await API.deleteMultipleProxies(ids);
+  } catch (err) {
+    console.warn('Empty box background sync error:', err);
+  }
+}
+
 // ── Selection Handlers ─────────────────────────────────────────
 function toggleProxySelection(proxyId, isChecked) {
   if (isChecked) {
@@ -707,15 +966,9 @@ function toggleProxySelection(proxyId, isChecked) {
   renderBoxes();
 }
 
-function toggleSelectAllAvailInBox(boxKey, isChecked) {
-  const [country, provider] = boxKey.split('___');
-  const avail = AppState.proxies.filter(p =>
-    p.status === 'available' &&
-    p.country.toUpperCase() === country &&
-    p.provider === provider
-  );
-
-  avail.forEach(p => {
+function toggleSelectAllInBox(boxKey, isChecked) {
+  const displayProxies = getBoxDisplayProxies(boxKey);
+  displayProxies.forEach(p => {
     if (isChecked) AppState.selectedIds.add(p.id);
     else AppState.selectedIds.delete(p.id);
   });
@@ -723,12 +976,8 @@ function toggleSelectAllAvailInBox(boxKey, isChecked) {
 }
 
 function clearSelectionInBox(boxKey) {
-  const [country, provider] = boxKey.split('___');
-  const inBox = AppState.proxies.filter(p =>
-    p.country.toUpperCase() === country &&
-    p.provider === provider
-  );
-  inBox.forEach(p => AppState.selectedIds.delete(p.id));
+  const displayProxies = getBoxDisplayProxies(boxKey);
+  displayProxies.forEach(p => AppState.selectedIds.delete(p.id));
   renderBoxes();
 }
 

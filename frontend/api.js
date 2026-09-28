@@ -168,7 +168,7 @@ const DemoBackend = (() => {
       const user = DEMO_USERS.find(u => u.id === s.userId);
       if (p.user_id !== s.userId && user.role !== 'admin') return err('Access denied.');
       const n = now();
-      p.status = 'available'; p.used_at = ''; p.last_copied_at = '';
+      p.status = 'available'; p.used_at = ''; p.last_copied_at = ''; p.copy_count = 0;
       activity.unshift({ id: genId('A'), user_id: s.userId, proxy_id: proxyId, action: 'RESET_PROXY', timestamp: n, country: p.country, provider: p.provider, proxy: p.proxy });
       saveAll();
       return ok({ ...p }, 'Reset.');
@@ -209,6 +209,7 @@ const DemoBackend = (() => {
           p.status = 'available';
           p.used_at = '';
           p.last_copied_at = '';
+          p.copy_count = 0;
           updated.push(p);
           activity.unshift({ id: genId('A'), user_id: s.userId, proxy_id: p.id, action: 'RESET_PROXY', timestamp: n, country: p.country, provider: p.provider, proxy: p.proxy });
         }
