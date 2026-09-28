@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Proxy Collector for Inexra — Login</title>
+  <meta name="description" content="Proxy Collector — Internal proxy management tool. Secure login." />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>" />
+</head>
+<body class="login-page">
+
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon">🔐</div>
+      <h1>Proxy Collector for Inexra</h1>
+      <p>Internal proxy management system</p>
+    </div>
+
+    <div id="login-error" class="login-error hidden">
+      <span>⚠️</span>
+      <span id="login-error-msg">Invalid credentials.</span>
+    </div>
+
+    <form id="login-form" autocomplete="off">
+      <div class="form-group">
+        <label class="form-label" for="username">Username</label>
+        <input
+          type="text"
+          id="username"
+          name="username"
+          class="form-input"
+          placeholder="Enter your username"
+          autocomplete="username"
+          required
+          spellcheck="false"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          class="form-input"
+          placeholder="Enter your password"
+          autocomplete="current-password"
+          required
+        />
+      </div>
+      <div style="margin-top:8px;">
+        <button type="submit" id="login-btn" class="btn btn-primary btn-full">
+          <span id="login-btn-text">Login</span>
+          <span id="login-spinner" class="hidden"><span class="spinner" style="width:16px;height:16px;border-width:2px;border-top-color:#000;"></span></span>
+        </button>
+      </div>
+    </form>
+
+    <p style="margin-top:20px; text-align:center; font-size:0.72rem; color:var(--text-muted);">
+      Proxy Collector for Inexra &middot; Internal Use Only
+    </p>
+
+    <div style="margin-top:16px; background:rgba(34,197,94,0.07); border:1px solid rgba(34,197,94,0.2); border-radius:8px; padding:12px 14px; font-size:0.75rem;">
+      <div style="color:var(--accent); font-weight:700; margin-bottom:6px;">🟢 Demo Mode — No backend needed</div>
+      <div style="color:var(--text-secondary); line-height:1.7;">
+        Admin: <code style="color:var(--text-primary);">admin</code> / <code style="color:var(--text-primary);">admin123</code><br/>
+        User:&nbsp;&nbsp;<code style="color:var(--text-primary);">user01</code> / <code style="color:var(--text-primary);">user123</code>
+      </div>
+    </div>
+  </div>
+
+  <script src="api.js"></script>
+  <script src="auth.js"></script>
+  <script>
+    // If already logged in, redirect
+    if (Auth.isAuthenticated()) {
+      window.location.href = 'dashboard.html';
+    }
+
+    const form   = document.getElementById('login-form');
+    const errDiv = document.getElementById('login-error');
+    const errMsg = document.getElementById('login-error-msg');
+    const btn    = document.getElementById('login-btn');
+    const spinner = document.getElementById('login-spinner');
+    const btnText = document.getElementById('login-btn-text');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errDiv.classList.add('hidden');
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!username || !password) {
+        showError('Please enter your username and password.');
+        return;
+      }
+
+      // Show loading
+      btn.disabled = true;
+      btnText.textContent = 'Logging in…';
+      spinner.classList.remove('hidden');
+
+      try {
+        const result = await Auth.login(username, password);
+        if (result.success) {
+          window.location.href = 'dashboard.html';
+        } else {
+          showError(result.message || 'Invalid credentials. Please try again.');
+        }
+      } catch (err) {
+        showError('Connection error. Please check your configuration and try again.');
+        console.error('Login error:', err);
+      } finally {
+        btn.disabled = false;
+        btnText.textContent = 'Login';
+        spinner.classList.add('hidden');
+      }
+    });
+
+    function showError(msg) {
+      errMsg.textContent = msg;
+      errDiv.classList.remove('hidden');
+      document.getElementById('password').value = '';
+      document.getElementById('password').focus();
+    }
+
+    // Focus username on load
+    document.getElementById('username').focus();
+  </script>
+</body>
+</html>

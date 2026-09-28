@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Proxy Collector for Inexra</title>
+  <meta name="description" content="Proxy Collector for Inexra — Internal proxy management tool." />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>" />
+</head>
+<body class="box-app-body">
+
+<!-- ── Toast Notifications ───────────────────────────────────── -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ══════════════════════════════════════════════════════════
+     HEADER NAVBAR
+════════════════════════════════════════════════════════════ -->
+<header class="app-header">
+  <div class="header-left">
+    <div class="brand-logo">🔐</div>
+    <div>
+      <div class="brand-title">Proxy Collector for Inexra</div>
+      <div class="brand-subtitle">Internal Proxy Tracker &middot; Instant Copy &amp; Status</div>
+    </div>
+  </div>
+
+  <div class="header-stats">
+    <div class="stat-pill">
+      <span class="stat-label">Total</span>
+      <span class="stat-val" id="stat-total">0</span>
+    </div>
+    <div class="stat-pill stat-avail">
+      <span class="stat-dot green"></span>
+      <span class="stat-label">Available</span>
+      <span class="stat-val" id="stat-available">0</span>
+    </div>
+    <div class="stat-pill stat-used">
+      <span class="stat-dot red"></span>
+      <span class="stat-label">Used</span>
+      <span class="stat-val" id="stat-used">0</span>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <button class="btn btn-primary btn-sm" onclick="openAddBoxModal()">
+      <span>➕</span>
+      <span>Add Proxies / New Box</span>
+    </button>
+    <button class="btn btn-secondary btn-sm" onclick="refreshData()" title="Reload proxies">
+      <span id="refresh-icon">🔄</span>
+      <span>Refresh</span>
+    </button>
+    <div class="user-pill" id="user-badge" title="Logged in user">
+      <span>👤</span>
+      <span id="user-name">User</span>
+    </div>
+    <button class="btn btn-secondary btn-sm hidden" id="admin-users-btn" onclick="openUsersModal()" title="Manage Users">
+      <span>👥</span>
+      <span>Users</span>
+    </button>
+    <button class="btn btn-danger-outline btn-sm" onclick="Auth.logout()" title="Logout">
+      <span>🚪</span>
+      <span>Logout</span>
+    </button>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════
+     FILTER & SEARCH TOOLBAR
+════════════════════════════════════════════════════════════ -->
+<div class="toolbar-container">
+  <div class="search-box">
+    <span class="search-icon">🔍</span>
+    <input
+      type="text"
+      id="search-input"
+      class="search-input"
+      placeholder="Search proxy string, IP, port, or provider..."
+      autocomplete="off"
+      spellcheck="false"
+    />
+    <button id="clear-search-btn" class="clear-search-btn hidden" onclick="clearSearch()" title="Clear">✕</button>
+  </div>
+
+  <div class="filter-controls">
+    <div class="select-wrapper">
+      <label for="filter-country" class="filter-label">Country:</label>
+      <select id="filter-country" class="filter-select" onchange="applyFilters()">
+        <option value="">All Countries</option>
+      </select>
+    </div>
+
+    <div class="select-wrapper">
+      <label for="filter-provider" class="filter-label">Provider:</label>
+      <select id="filter-provider" class="filter-select" onchange="applyFilters()">
+        <option value="">All Providers</option>
+      </select>
+    </div>
+
+    <div class="select-wrapper">
+      <label for="filter-status" class="filter-label">Status:</label>
+      <select id="filter-status" class="filter-select" onchange="applyFilters()">
+        <option value="">All Statuses</option>
+        <option value="available">🟢 Available Only</option>
+        <option value="used">🔴 Used Only</option>
+      </select>
+    </div>
+
+    <button id="reset-filters-btn" class="btn btn-ghost btn-sm hidden" onclick="resetFilters()">
+      <span>✕</span> Clear Filters
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MAIN WORKSPACE — COUNTRY & PROVIDER BOXES GRID
+════════════════════════════════════════════════════════════ -->
+<main class="main-workspace">
+  <!-- Loading state -->
+  <div id="loading-state" class="state-container">
+    <div class="spinner"></div>
+    <div style="margin-top:12px; color:var(--text-secondary); font-size:0.9rem;">Loading proxy boxes…</div>
+  </div>
+
+  <!-- Empty state (no proxies at all) -->
+  <div id="empty-state" class="state-container hidden">
+    <div style="font-size:3rem; margin-bottom:12px;">📦</div>
+    <h3 style="font-size:1.15rem; margin-bottom:8px;">No Proxy Boxes Yet</h3>
+    <p style="color:var(--text-secondary); font-size:0.85rem; max-width:420px; margin-bottom:18px;">
+      Paste your first batch of proxies by country and provider to start tracking which ones are used or available.
+    </p>
+    <button class="btn btn-primary" onclick="openAddBoxModal()">➕ Add Proxies / New Box</button>
+  </div>
+
+  <!-- No search match state -->
+  <div id="no-match-state" class="state-container hidden">
+    <div style="font-size:2.5rem; margin-bottom:10px;">🔍</div>
+    <h3 style="font-size:1.05rem; margin-bottom:6px;">No proxies match your filters</h3>
+    <p style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:14px;">Try changing the search query or resetting filters.</p>
+    <button class="btn btn-secondary btn-sm" onclick="resetFilters()">Reset Filters</button>
+  </div>
+
+  <!-- Boxes Container Grid -->
+  <div id="boxes-container" class="boxes-grid"></div>
+</main>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODAL: ADD PROXIES / CREATE BOX
+════════════════════════════════════════════════════════════ -->
+<div id="modal-add-box" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'modal-add-box')">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div class="modal-title-group">
+        <span class="modal-icon">➕</span>
+        <h3>Add Proxies to Box</h3>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-add-box')">✕</button>
+    </div>
+
+    <form id="add-box-form" onsubmit="submitAddBox(event)">
+      <div class="modal-body">
+        <div class="form-row-2">
+          <div class="form-group">
+            <label class="form-label" for="add-country">Country <span class="req">*</span></label>
+            <select id="add-country" class="form-input" required>
+              <option value="">Select country...</option>
+              <option value="US">🇺🇸 United States (US)</option>
+              <option value="UK">🇬🇧 United Kingdom (UK)</option>
+              <option value="DE">🇩🇪 Germany (DE)</option>
+              <option value="FR">🇫🇷 France (FR)</option>
+              <option value="NL">🇳🇱 Netherlands (NL)</option>
+              <option value="CA">🇨🇦 Canada (CA)</option>
+              <option value="AU">🇦🇺 Australia (AU)</option>
+              <option value="IN">🇮🇳 India (IN)</option>
+              <option value="SG">🇸🇬 Singapore (SG)</option>
+              <option value="JP">🇯🇵 Japan (JP)</option>
+              <option value="BR">🇧🇷 Brazil (BR)</option>
+              <option value="ES">🇪🇸 Spain (ES)</option>
+              <option value="IT">🇮🇹 Italy (IT)</option>
+              <option value="PL">🇵🇱 Poland (PL)</option>
+              <option value="OTHER">🌐 Other / Custom Code</option>
+            </select>
+          </div>
+
+          <div class="form-group hidden" id="custom-country-group">
+            <label class="form-label" for="custom-country">Custom Country Code</label>
+            <input type="text" id="custom-country" class="form-input" placeholder="e.g. MX, SE, ZA" maxlength="10" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="add-provider">Proxy Provider <span class="req">*</span></label>
+            <select id="add-provider" class="form-input" required>
+              <option value="LokiProxy">LokiProxy</option>
+              <option value="DataImpulse">DataImpulse</option>
+              <option value="IPRoyal">IPRoyal</option>
+              <option value="Smartproxy">Smartproxy</option>
+              <option value="Bright Data">Bright Data</option>
+              <option value="Oxylabs">Oxylabs</option>
+              <option value="CUSTOM">Custom Provider Name...</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group hidden" id="custom-provider-group">
+          <label class="form-label" for="custom-provider">Custom Provider Name</label>
+          <input type="text" id="custom-provider" class="form-input" placeholder="e.g. MyProxyNet" />
+        </div>
+
+        <div class="form-group">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <label class="form-label" for="add-proxies-text" style="margin-bottom:0;">
+              Paste Proxies (one per line) <span class="req">*</span>
+            </label>
+            <span id="line-counter" class="text-xs text-muted">0 lines entered</span>
+          </div>
+          <textarea
+            id="add-proxies-text"
+            class="form-input form-textarea mono"
+            placeholder="192.168.1.1:8080:username:password&#10;192.168.1.2:8080:username:password&#10;192.168.1.3:8080:username:password"
+            rows="7"
+            required
+            spellcheck="false"
+            oninput="updateLineCount()"
+          ></textarea>
+          <div class="text-xs text-muted" style="margin-top:4px;">
+            Tip: Duplicate proxies will automatically be skipped.
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-box')">Cancel</button>
+        <button type="submit" id="submit-add-box-btn" class="btn btn-primary">
+          <span id="submit-add-box-text">Add Proxies to Box</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODAL: USERS MANAGEMENT (Admin Only)
+════════════════════════════════════════════════════════════ -->
+<div id="modal-users" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'modal-users')">
+  <div class="modal-card" style="max-width:680px;">
+    <div class="modal-header">
+      <div class="modal-title-group">
+        <span class="modal-icon">👥</span>
+        <h3>User Management</h3>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-users')">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="users-table-container">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Display Name</th>
+              <th>Role</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="users-table-body">
+            <!-- populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeModal('modal-users')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="api.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
