@@ -55,9 +55,9 @@
       <span>👤</span>
       <span id="user-name">User</span>
     </div>
-    <button class="btn btn-secondary btn-sm hidden" id="admin-users-btn" onclick="openUsersModal()" title="Manage Users">
-      <span>👥</span>
-      <span>Users</span>
+    <button class="btn btn-admin btn-sm hidden" id="admin-users-btn" onclick="openAdminModal()" title="Open Admin Control Panel">
+      <span>⚙️</span>
+      <span>Admin Control</span>
     </button>
     <button class="btn btn-danger-outline btn-sm" onclick="Auth.logout()" title="Logout">
       <span>🚪</span>
@@ -207,6 +207,13 @@
           <input type="text" id="custom-provider" class="form-input" placeholder="e.g. MyProxyNet" />
         </div>
 
+        <div class="form-group hidden" id="add-user-assign-group">
+          <label class="form-label" for="add-user-assign">Assign Proxies To User (Admin Only)</label>
+          <select id="add-user-assign" class="form-input">
+            <option value="">Myself (Admin)</option>
+          </select>
+        </div>
+
         <div class="form-group">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <label class="form-label" for="add-proxies-text" style="margin-bottom:0;">
@@ -240,39 +247,263 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════
-     MODAL: USERS MANAGEMENT (Admin Only)
+     MODAL: ADMIN CONTROL PANEL (Admin Only)
 ════════════════════════════════════════════════════════════ -->
-<div id="modal-users" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'modal-users')">
-  <div class="modal-card" style="max-width:680px;">
-    <div class="modal-header">
+<div id="modal-admin" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'modal-admin')">
+  <div class="modal-card admin-modal-card">
+    <div class="modal-header admin-modal-header">
       <div class="modal-title-group">
-        <span class="modal-icon">👥</span>
-        <h3>User Management</h3>
+        <span class="modal-icon">⚙️</span>
+        <div>
+          <h3>Admin Control Panel</h3>
+          <div class="modal-subtitle">User Management &amp; Proxy Inventory Allocation</div>
+        </div>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-users')">✕</button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="btn btn-secondary btn-sm" onclick="loadAdminUsers()" title="Reload user data">
+          <span id="admin-refresh-icon">🔄</span>
+          <span>Refresh</span>
+        </button>
+        <button class="modal-close" onclick="closeModal('modal-admin')">✕</button>
+      </div>
     </div>
 
-    <div class="modal-body">
-      <div class="users-table-container">
-        <table class="simple-table">
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Display Name</th>
-              <th>Role</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="users-table-body">
-            <!-- populated by JS -->
-          </tbody>
-        </table>
+    <div class="modal-body admin-modal-body">
+      <!-- Admin Top Stats Summary Bar -->
+      <div class="admin-stats-bar">
+        <div class="admin-stat-card">
+          <span class="admin-stat-icon">👥</span>
+          <div>
+            <div class="admin-stat-num" id="admin-stat-users">0</div>
+            <div class="admin-stat-label">Total Users</div>
+          </div>
+        </div>
+        <div class="admin-stat-card">
+          <span class="admin-stat-icon">📦</span>
+          <div>
+            <div class="admin-stat-num" id="admin-stat-total-proxies">0</div>
+            <div class="admin-stat-label">Total Proxies</div>
+          </div>
+        </div>
+        <div class="admin-stat-card border-green">
+          <span class="admin-stat-icon">🟢</span>
+          <div>
+            <div class="admin-stat-num text-success" id="admin-stat-avail-proxies">0</div>
+            <div class="admin-stat-label">Available Proxies</div>
+          </div>
+        </div>
+        <div class="admin-stat-card border-red">
+          <span class="admin-stat-icon">🔴</span>
+          <div>
+            <div class="admin-stat-num text-danger" id="admin-stat-used-proxies">0</div>
+            <div class="admin-stat-label">Used Proxies</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: Create New User & ID/Pass -->
+      <div class="admin-create-box">
+        <div class="admin-section-header">
+          <div class="admin-section-title">
+            <span>➕</span>
+            <h4>Create New User Account &amp; Set ID / Password</h4>
+          </div>
+          <span class="text-xs text-muted">Generate team credentials instantly</span>
+        </div>
+
+        <form id="admin-create-user-form" onsubmit="submitAdminCreateUser(event)">
+          <div class="admin-form-grid">
+            <div class="form-group">
+              <label class="form-label" for="new-username">Username / Login ID <span class="req">*</span></label>
+              <input
+                type="text"
+                id="new-username"
+                class="form-input mono"
+                placeholder="e.g. rahul_01, inexra_user"
+                required
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="new-display-name">Display Name</label>
+              <input
+                type="text"
+                id="new-display-name"
+                class="form-input"
+                placeholder="e.g. Rahul Sharma (Ops)"
+                autocomplete="off"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="new-role">Role <span class="req">*</span></label>
+              <select id="new-role" class="form-input" required>
+                <option value="user">Standard User</option>
+                <option value="admin">Administrator</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+                <label class="form-label" for="new-password" style="margin-bottom:0;">Password <span class="req">*</span></label>
+                <button type="button" class="btn-gen-inline" onclick="autoGeneratePassword('new-password')">
+                  🎲 Auto-Gen
+                </button>
+              </div>
+              <div class="pass-input-wrapper">
+                <input
+                  type="text"
+                  id="new-password"
+                  class="form-input mono"
+                  placeholder="Min 4 characters..."
+                  required
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button type="button" class="btn-pass-toggle" onclick="togglePassVisibility('new-password', this)" title="Toggle view">
+                  👁
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; margin-top:12px;">
+            <button type="submit" id="btn-create-user-submit" class="btn btn-primary">
+              <span id="btn-create-user-text">➕ Create Account</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Credentials Banner (shown right after creating a user) -->
+        <div id="new-creds-banner" class="new-creds-banner hidden">
+          <div class="creds-banner-header">
+            <span class="creds-badge-success">✓ User Created Successfully!</span>
+            <button class="btn-close-banner" onclick="dismissCredsBanner()">✕</button>
+          </div>
+          <div class="creds-info-grid">
+            <div class="cred-item">
+              <span class="cred-label">Login ID:</span>
+              <strong id="created-cred-username" class="mono text-bright">user</strong>
+            </div>
+            <div class="cred-item">
+              <span class="cred-label">Password:</span>
+              <strong id="created-cred-password" class="mono text-accent">pass</strong>
+            </div>
+            <div class="cred-item">
+              <span class="cred-label">Role:</span>
+              <span id="created-cred-role" class="badge badge-neutral">User</span>
+            </div>
+          </div>
+          <div class="creds-actions">
+            <button class="btn btn-sm btn-accent-solid" onclick="copyCreatedCredentials()">
+              📋 Copy Login Details to Clipboard
+            </button>
+            <span class="text-xs text-muted">Ready to share directly with the user</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: Users & Proxy Allocation Table -->
+      <div class="admin-table-section">
+        <div class="admin-section-header">
+          <div class="admin-section-title">
+            <span>👥</span>
+            <h4>All User Accounts &amp; Proxy Allocations</h4>
+          </div>
+          <div class="admin-search-wrapper">
+            <input
+              type="text"
+              id="admin-search-users"
+              class="form-input admin-search-input"
+              placeholder="Search user by name or username…"
+              oninput="filterAdminUserList()"
+            />
+          </div>
+        </div>
+
+        <div class="users-table-container">
+          <table class="simple-table admin-table">
+            <thead>
+              <tr>
+                <th>User Account</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Proxy Allocation</th>
+                <th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="admin-users-tbody">
+              <!-- populated by JS -->
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <div class="modal-footer">
-      <button type="button" class="btn btn-secondary" onclick="closeModal('modal-users')">Close</button>
+      <button type="button" class="btn btn-secondary" onclick="closeModal('modal-admin')">Close Admin Panel</button>
     </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODAL: CHANGE USER PASSWORD (Admin Only)
+════════════════════════════════════════════════════════════ -->
+<div id="modal-change-pass" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'modal-change-pass')">
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-header">
+      <div class="modal-title-group">
+        <span class="modal-icon">🔑</span>
+        <div>
+          <h3>Change / Reset Password</h3>
+          <div class="modal-subtitle" id="change-pass-subtitle">Update credentials for user</div>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-change-pass')">✕</button>
+    </div>
+
+    <form id="change-pass-form" onsubmit="submitAdminChangePassword(event)">
+      <input type="hidden" id="change-pass-user-id" />
+      <input type="hidden" id="change-pass-username-hidden" />
+
+      <div class="modal-body">
+        <div class="form-group">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <label class="form-label" for="change-pass-input" style="margin-bottom:0;">New Password <span class="req">*</span></label>
+            <button type="button" class="btn-gen-inline" onclick="autoGeneratePassword('change-pass-input')">
+              🎲 Auto-Gen
+            </button>
+          </div>
+          <div class="pass-input-wrapper">
+            <input
+              type="text"
+              id="change-pass-input"
+              class="form-input mono"
+              placeholder="Min 4 characters..."
+              required
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="button" class="btn-pass-toggle" onclick="togglePassVisibility('change-pass-input', this)" title="Toggle view">
+              👁
+            </button>
+          </div>
+        </div>
+
+        <div id="change-pass-copied-hint" class="text-xs text-muted">
+          Clicking "Save &amp; Copy" will update the password in the database and copy login credentials to your clipboard.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-change-pass')">Cancel</button>
+        <button type="submit" id="btn-change-pass-submit" class="btn btn-primary">
+          <span id="btn-change-pass-text">Save New Password</span>
+        </button>
+      </div>
+    </form>
   </div>
 </div>
 

@@ -362,7 +362,7 @@ var UserService = (function() {
     role        = (role === 'admin') ? 'admin' : 'user';
 
     if (!username || username.length < 3) throw new Error('Username must be at least 3 characters.');
-    if (!plainPassword || plainPassword.length < 6) throw new Error('Password must be at least 6 characters.');
+    if (!plainPassword || plainPassword.length < 4) throw new Error('Password must be at least 4 characters.');
     if (findUserByUsername(username)) throw new Error('Username "' + username + '" already exists.');
 
     var id = generateUserId();
@@ -372,7 +372,7 @@ var UserService = (function() {
     var sheet = getSheet(SHEET_USERS);
     sheet.appendRow([id, username, hash, displayName, role, 'TRUE', now]);
 
-    return { id: id, username: username, display_name: displayName, role: role, active: 'TRUE', created_at: now };
+    return { id: id, username: username, display_name: displayName, role: role, active: 'TRUE', created_at: now, password: plainPassword };
   }
 
   function toggleUserActive(userId, newActive) {
@@ -383,19 +383,57 @@ var UserService = (function() {
   }
 
   function changePassword(userId, newPlainPassword) {
-    if (!newPlainPassword || newPlainPassword.length < 6) throw new Error('Password must be at least 6 characters.');
+    if (!newPlainPassword || newPlainPassword.length < 4) throw new Error('Password must be at least 4 characters.');
     var sheet = getSheet(SHEET_USERS);
     var rowIdx = findRowIndex(sheet, UC.ID, userId);
     if (rowIdx < 0) throw new Error('User not found.');
     sheet.getRange(rowIdx, UC.PASSWORD_HASH + 1).setValue(hashPassword(newPlainPassword));
+    return true;
   }
 
   function handleAdminGetUsers(token) {
     var caller = validateSession(token);
     if (!caller) return errorResponse('Unauthorized', 401);
     if (caller.role !== 'admin') return errorResponse('Admin access required.', 403);
+
+    // Count proxies per user directly from SHEET_PROXIES
+    var proxyCounts = {};
+    try {
+      var pSheet = getSheet(SHEET_PROXIES);
+      var pData = pSheet.getDataRange().getValues();
+      for (var i = 1; i < pData.length; i++) {
+        var row = pData[i];
+        var uid = String(row[PC.USER_ID]).trim();
+        var status = String(row[PC.STATUS]).trim().toLowerCase();
+        if (status === 'deleted' || !uid) continue;
+
+        if (!proxyCounts[uid]) {
+          proxyCounts[uid] = { total: 0, available: 0, used: 0 };
+        }
+        proxyCounts[uid].total++;
+        if (status === 'available') {
+          proxyCounts[uid].available++;
+        } else if (status === 'used') {
+          proxyCounts[uid].used++;
+        }
+      }
+    } catch (e) {
+      Logger.log('Could not aggregate proxy counts: ' + e.message);
+    }
+
     var users = getAllUsers().map(function(u) {
-      return { id: u.id, username: u.username, display_name: u.display_name, role: u.role, active: u.active, created_at: u.created_at };
+      var stats = proxyCounts[u.id] || { total: 0, available: 0, used: 0 };
+      return {
+        id: u.id,
+        username: u.username,
+        display_name: u.display_name,
+        role: u.role,
+        active: u.active,
+        created_at: u.created_at,
+        total_proxies: stats.total,
+        available_proxies: stats.available,
+        used_proxies: stats.used
+      };
     });
     return successResponse(users);
   }
@@ -406,7 +444,7 @@ var UserService = (function() {
     if (caller.role !== 'admin') return errorResponse('Admin access required.', 403);
     try {
       var newUser = createUser(body.username, body.password, body.display_name, body.role);
-      return successResponse(newUser, 'User created.');
+      return successResponse(newUser, 'User created successfully.');
     } catch (e) {
       return errorResponse(e.message, 400);
     }
@@ -430,9 +468,10 @@ var UserService = (function() {
     var caller = validateSession(token);
     if (!caller) return errorResponse('Unauthorized', 401);
     if (caller.role !== 'admin') return errorResponse('Admin access required.', 403);
+    var newPassword = body.password ? String(body.password) : ('Inexra#' + Math.floor(1000 + Math.random() * 9000));
     try {
-      changePassword(sanitizeStr(body.userId), String(body.password));
-      return successResponse(null, 'Password updated.');
+      changePassword(sanitizeStr(body.userId), newPassword);
+      return successResponse({ password: newPassword }, 'Password updated successfully.');
     } catch (e) {
       return errorResponse(e.message, 400);
     }
@@ -711,7 +750,7 @@ var ProxyService = (function() {
   function handleGetDashboard(token) {
     var user = validateSession(token);
     if (!user) return errorResponse('Unauthorized', 401);
-    var proxies = getUserProxies(user.id);
+    var proxies = (user.role === 'admin') ? getAllProxies() : getUserProxies(user.id);
     var total = proxies.length;
     var avail = proxies.filter(function(p) { return p.status === 'available'; }).length;
     var used  = proxies.filter(function(p) { return p.status === 'used'; }).length;
@@ -721,7 +760,15 @@ var ProxyService = (function() {
   function handleGetProxies(token, body) {
     var user = validateSession(token);
     if (!user) return errorResponse('Unauthorized', 401);
-    var proxies = (user.role === 'admin') ? getAllProxies() : getUserProxies(user.id, body.filters);
+    var proxies;
+    if (user.role === 'admin') {
+      proxies = getAllProxies();
+      if (body && body.userId) {
+        proxies = proxies.filter(function(p) { return p.user_id === String(body.userId); });
+      }
+    } else {
+      proxies = getUserProxies(user.id, body ? body.filters : {});
+    }
     return successResponse(proxies);
   }
 
@@ -729,7 +776,8 @@ var ProxyService = (function() {
     var user = validateSession(token);
     if (!user) return errorResponse('Unauthorized', 401);
     try {
-      var result = addProxies(user.id, body.country, body.provider, body.proxies);
+      var targetUserId = (user.role === 'admin' && body.userId) ? sanitizeStr(body.userId) : user.id;
+      var result = addProxies(targetUserId, body.country, body.provider, body.proxies);
       return successResponse(result, result.added + ' proxy/proxies added.');
     } catch (e) {
       return errorResponse(e.message, 400);

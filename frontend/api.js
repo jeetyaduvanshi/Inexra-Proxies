@@ -57,11 +57,12 @@ const DemoBackend = (() => {
     { id: 'A004', user_id: 'U001', proxy_id: 'P0010', action: 'COPY_PROXY', timestamp: '2026-09-25T16:45:00.000Z', country: 'FR', provider: 'LokiProxy', proxy: 'fr2.lokiproxy.net:8080:user10:pass10' },
   ];
 
+  let users = load('users', DEMO_USERS);
   let proxies = load('proxies', INITIAL_PROXIES);
   let activity = load('activity', INITIAL_ACTIVITY);
   let sessions = load('sessions', {});
 
-  function saveAll() { save('proxies', proxies); save('activity', activity); save('sessions', sessions); }
+  function saveAll() { save('users', users); save('proxies', proxies); save('activity', activity); save('sessions', sessions); }
 
   function ok(data, msg) { return { success: true, data, message: msg || '' }; }
   function err(msg) { return { success: false, data: null, message: msg }; }
@@ -82,7 +83,7 @@ const DemoBackend = (() => {
 
   const handle = {
     login: ({ username, password }) => {
-      const user = DEMO_USERS.find(u => u.username === username && u.password === password && u.active === 'TRUE');
+      const user = users.find(u => u.username === username && u.password === password && u.active === 'TRUE');
       if (!user) return err('Invalid credentials.');
       const token = genId('tok');
       sessions[token] = { userId: user.id, expires: new Date(Date.now() + 8 * 3600 * 1000).toISOString() };
@@ -95,7 +96,7 @@ const DemoBackend = (() => {
     me: ({ token }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      const user = DEMO_USERS.find(u => u.id === s.userId);
+      const user = users.find(u => u.id === s.userId);
       if (!user) return err('Unauthorized');
       return ok({ user_id: user.id, username: user.username, display_name: user.display_name, role: user.role, created_at: user.created_at });
     },
@@ -103,15 +104,20 @@ const DemoBackend = (() => {
     getDashboard: ({ token }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      const mine = getUserProxies(s.userId);
+      const caller = users.find(u => u.id === s.userId);
+      const mine = (caller && caller.role === 'admin') ? proxies.filter(p => p.status !== 'deleted') : getUserProxies(s.userId);
       const countries = new Set(mine.map(p => p.country));
       return ok({ stats: { total: mine.length, available: mine.filter(p => p.status === 'available').length, used: mine.filter(p => p.status === 'used').length, countries: countries.size }, proxies: mine });
     },
 
-    getProxies: ({ token, filters }) => {
+    getProxies: ({ token, filters, userId }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      let mine = getUserProxies(s.userId);
+      const caller = users.find(u => u.id === s.userId);
+      let mine = (caller && caller.role === 'admin') ? proxies.filter(p => p.status !== 'deleted') : getUserProxies(s.userId);
+      if (caller && caller.role === 'admin' && userId) {
+        mine = mine.filter(p => p.user_id === userId);
+      }
       if (filters) {
         if (filters.country) mine = mine.filter(p => p.country === filters.country);
         if (filters.provider) mine = mine.filter(p => p.provider === filters.provider);
@@ -120,10 +126,12 @@ const DemoBackend = (() => {
       return ok(mine);
     },
 
-    addProxies: ({ token, country, provider, proxies: lines }) => {
+    addProxies: ({ token, country, provider, proxies: lines, userId }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      const existing = new Set(getUserProxies(s.userId).map(p => p.proxy.trim().toLowerCase()));
+      const caller = users.find(u => u.id === s.userId);
+      const targetUserId = (caller && caller.role === 'admin' && userId) ? userId : s.userId;
+      const existing = new Set(getUserProxies(targetUserId).map(p => p.proxy.trim().toLowerCase()));
       let added = 0, skipped = 0;
       const n = now();
       (lines || []).forEach(line => {
@@ -131,7 +139,7 @@ const DemoBackend = (() => {
         if (!clean) return;
         if (existing.has(clean.toLowerCase())) { skipped++; return; }
         existing.add(clean.toLowerCase());
-        proxies.push({ id: genId('P'), user_id: s.userId, country, provider, proxy: clean, status: 'available', created_at: n, used_at: '', last_copied_at: '', copy_count: 0 });
+        proxies.push({ id: genId('P'), user_id: targetUserId, country, provider, proxy: clean, status: 'available', created_at: n, used_at: '', last_copied_at: '', copy_count: 0 });
         added++;
       });
       activity.unshift({ id: genId('A'), user_id: s.userId, proxy_id: 'BATCH', action: 'ADD_PROXY', timestamp: n, country, provider, proxy: added + ' proxies added' });
@@ -258,40 +266,104 @@ const DemoBackend = (() => {
     adminGetUsers: ({ token }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      const user = DEMO_USERS.find(u => u.id === s.userId);
-      if (user.role !== 'admin') return err('Admin access required.');
-      return ok(DEMO_USERS.map(u => ({ id: u.id, username: u.username, display_name: u.display_name, role: u.role, active: u.active, created_at: u.created_at })));
+      const caller = users.find(u => u.id === s.userId);
+      if (!caller || caller.role !== 'admin') return err('Admin access required.');
+
+      const counts = {};
+      proxies.filter(p => p.status !== 'deleted').forEach(p => {
+        if (!counts[p.user_id]) counts[p.user_id] = { total: 0, available: 0, used: 0 };
+        counts[p.user_id].total++;
+        if (p.status === 'available') counts[p.user_id].available++;
+        else if (p.status === 'used') counts[p.user_id].used++;
+      });
+
+      return ok(users.map(u => {
+        const c = counts[u.id] || { total: 0, available: 0, used: 0 };
+        return {
+          id: u.id,
+          username: u.username,
+          display_name: u.display_name,
+          role: u.role,
+          active: u.active,
+          created_at: u.created_at,
+          total_proxies: c.total,
+          available_proxies: c.available,
+          used_proxies: c.used
+        };
+      }));
     },
 
     adminGetProxies: ({ token }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      const user = DEMO_USERS.find(u => u.id === s.userId);
-      if (user.role !== 'admin') return err('Admin access required.');
+      const caller = users.find(u => u.id === s.userId);
+      if (!caller || caller.role !== 'admin') return err('Admin access required.');
       return ok(proxies);
     },
 
     adminGetActivity: ({ token }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      const user = DEMO_USERS.find(u => u.id === s.userId);
-      if (user.role !== 'admin') return err('Admin access required.');
+      const caller = users.find(u => u.id === s.userId);
+      if (!caller || caller.role !== 'admin') return err('Admin access required.');
       return ok(activity);
     },
 
     adminResetProxy: ({ token, proxyId }) => handle.resetProxy({ token, proxyId }),
     adminDeleteProxy: ({ token, proxyId }) => handle.deleteProxy({ token, proxyId }),
 
-    adminCreateUser: ({ token }) => {
+    adminCreateUser: ({ token, username, password, display_name, role }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      return err('Cannot create users in demo mode. Connect the Google Sheets backend to enable this.');
+      const caller = users.find(u => u.id === s.userId);
+      if (!caller || caller.role !== 'admin') return err('Admin access required.');
+
+      const cleanU = (username || '').trim().toLowerCase();
+      if (!cleanU || cleanU.length < 3) return err('Username must be at least 3 characters.');
+      if (!password || password.length < 4) return err('Password must be at least 4 characters.');
+      if (users.find(u => u.username.toLowerCase() === cleanU)) return err(`Username "${cleanU}" already exists.`);
+
+      const newUser = {
+        id: genId('U'),
+        username: cleanU,
+        password: String(password),
+        display_name: (display_name || '').trim() || cleanU,
+        role: role === 'admin' ? 'admin' : 'user',
+        active: 'TRUE',
+        created_at: now()
+      };
+      users.push(newUser);
+      saveAll();
+      return ok({ ...newUser }, 'User created successfully.');
     },
 
-    adminToggleUser: ({ token }) => {
+    adminToggleUser: ({ token, userId, active }) => {
       const s = getSession(token);
       if (!s) return err('Unauthorized');
-      return err('Cannot modify users in demo mode. Connect the Google Sheets backend to enable this.');
+      const caller = users.find(u => u.id === s.userId);
+      if (!caller || caller.role !== 'admin') return err('Admin access required.');
+      if (userId === caller.id) return err('Cannot toggle your own account.');
+
+      const target = users.find(u => u.id === userId);
+      if (!target) return err('User not found.');
+      target.active = (active === true || active === 'TRUE') ? 'TRUE' : 'FALSE';
+      saveAll();
+      return ok(null, 'User status updated.');
+    },
+
+    adminChangePassword: ({ token, userId, password }) => {
+      const s = getSession(token);
+      if (!s) return err('Unauthorized');
+      const caller = users.find(u => u.id === s.userId);
+      if (!caller || caller.role !== 'admin') return err('Admin access required.');
+
+      const target = users.find(u => u.id === userId);
+      if (!target) return err('User not found.');
+      const newPass = password ? String(password) : ('Inexra#' + Math.floor(1000 + Math.random() * 9000));
+      if (newPass.length < 4) return err('Password must be at least 4 characters.');
+      target.password = newPass;
+      saveAll();
+      return ok({ password: newPass }, 'Password updated successfully.');
     },
   };
 
@@ -337,7 +409,7 @@ const API = (() => {
   const logout = () => request('POST', 'logout', {});
   const getMe = () => request('POST', 'me', {});
   const getDashboard = () => request('POST', 'getDashboard', {});
-  const getProxies = (f = {}) => request('POST', 'getProxies', { filters: f });
+  const getProxies = (f = {}, userId = '') => request('POST', 'getProxies', { filters: f, userId });
   const addProxies = (d) => request('POST', 'addProxies', d);
   const copyProxy = (id) => request('POST', 'copyProxy', { proxyId: id });
   const copyMultipleProxies = (ids) => request('POST', 'copyMultipleProxies', { proxyIds: ids });

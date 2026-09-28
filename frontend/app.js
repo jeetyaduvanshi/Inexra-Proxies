@@ -52,6 +52,8 @@ const AppState = {
   selectedIds: new Set(),
   openPasteBoxes: new Set(), // box keys with inline paste drawer open
   recentlyCopiedIds: new Set(),
+  adminUsers: [],
+  createdUserCreds: null,
 };
 
 // ── Initialization ─────────────────────────────────────────────
@@ -777,6 +779,26 @@ function openAddBoxModal() {
     modal.classList.remove('hidden');
     document.getElementById('add-proxies-text').value = '';
     updateLineCount();
+
+    // Show user assign dropdown if logged in user is admin
+    const assignGroup = document.getElementById('add-user-assign-group');
+    if (assignGroup && AppState.currentUser?.role === 'admin') {
+      assignGroup.classList.remove('hidden');
+      if (AppState.adminUsers && AppState.adminUsers.length > 0) {
+        populateUserAssignDropdown(AppState.adminUsers);
+      } else {
+        // Pre-fetch in background
+        API.adminGetUsers().then(res => {
+          if (res.success && Array.isArray(res.data)) {
+            AppState.adminUsers = res.data;
+            populateUserAssignDropdown(res.data);
+          }
+        });
+      }
+    } else if (assignGroup) {
+      assignGroup.classList.add('hidden');
+    }
+
     document.getElementById('add-country').focus();
   }
 }
@@ -817,17 +839,27 @@ async function submitAddBox(e) {
     return;
   }
 
+  const assignGroup = document.getElementById('add-user-assign-group');
+  const assignSelect = document.getElementById('add-user-assign');
+  const targetUserId = (assignGroup && !assignGroup.classList.contains('hidden') && assignSelect) ? assignSelect.value : '';
+
   const btn = document.getElementById('submit-add-box-btn');
   const btnText = document.getElementById('submit-add-box-text');
   btn.disabled = true;
   btnText.textContent = 'Adding…';
 
+  const payload = { country, provider, proxies: lines };
+  if (targetUserId) payload.userId = targetUserId;
+
   try {
-    const res = await API.addProxies({ country, provider, proxies: lines });
+    const res = await API.addProxies(payload);
     if (res.success) {
       closeModal('modal-add-box');
       showToast(`✓ Added ${res.data.added} proxies! (${res.data.skipped} duplicates skipped)`, 'success');
       await loadData();
+      if (AppState.currentUser?.role === 'admin') {
+        loadAdminUsers();
+      }
     } else {
       showToast(res.message || 'Failed to add proxies.', 'error');
     }
@@ -839,31 +871,396 @@ async function submitAddBox(e) {
   }
 }
 
-// ── Admin: Users Modal ─────────────────────────────────────────
-async function openUsersModal() {
-  const modal = document.getElementById('modal-users');
+// ── Admin: Control Panel & User Management ─────────────────────
+async function openAdminModal() {
+  const modal = document.getElementById('modal-admin');
   if (!modal) return;
   modal.classList.remove('hidden');
+  dismissCredsBanner();
+  await loadAdminUsers();
+}
 
-  const tbody = document.getElementById('users-table-body');
-  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:16px;">Loading users…</td></tr>';
+async function loadAdminUsers() {
+  const refreshIcon = document.getElementById('admin-refresh-icon');
+  if (refreshIcon) refreshIcon.style.animation = 'spin 0.8s linear infinite';
+
+  const tbody = document.getElementById('admin-users-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:24px; color:var(--text-secondary);"><div class="spinner" style="margin:0 auto 8px;"></div>Loading user accounts and proxy allocations…</td></tr>';
 
   try {
     const res = await API.adminGetUsers();
     if (res.success && Array.isArray(res.data)) {
-      tbody.innerHTML = res.data.map(u => `
-        <tr>
-          <td><strong>${escapeHtml(u.username)}</strong></td>
-          <td>${escapeHtml(u.display_name || '—')}</td>
-          <td><span class="badge ${u.role === 'admin' ? 'badge-primary' : 'badge-neutral'}">${escapeHtml(u.role)}</span></td>
-          <td><span class="badge ${u.active === 'TRUE' ? 'badge-success' : 'badge-danger'}">${u.active === 'TRUE' ? 'Active' : 'Inactive'}</span></td>
-        </tr>
-      `).join('');
+      AppState.adminUsers = res.data;
+      updateAdminStats(res.data);
+      populateUserAssignDropdown(res.data);
+      renderAdminUsersTable();
     } else {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--red); padding:16px;">${escapeHtml(res.message || 'Error')}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--red); padding:18px;">${escapeHtml(res.message || 'Error loading users.')}</td></tr>`;
     }
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--red); padding:16px;">Failed to load users.</td></tr>';
+    console.error('Error fetching admin users:', err);
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--red); padding:18px;">Failed to load user accounts.</td></tr>';
+  } finally {
+    if (refreshIcon) refreshIcon.style.animation = '';
+  }
+}
+
+function updateAdminStats(users) {
+  const userCount = users.length;
+  let totalProxies = 0;
+  let availProxies = 0;
+  let usedProxies = 0;
+
+  users.forEach(u => {
+    totalProxies += (u.total_proxies || 0);
+    availProxies += (u.available_proxies || 0);
+    usedProxies += (u.used_proxies || 0);
+  });
+
+  const uEl = document.getElementById('admin-stat-users');
+  const tEl = document.getElementById('admin-stat-total-proxies');
+  const aEl = document.getElementById('admin-stat-avail-proxies');
+  const usEl = document.getElementById('admin-stat-used-proxies');
+
+  if (uEl) uEl.textContent = userCount;
+  if (tEl) tEl.textContent = totalProxies;
+  if (aEl) aEl.textContent = availProxies;
+  if (usEl) usEl.textContent = usedProxies;
+}
+
+function populateUserAssignDropdown(users) {
+  const select = document.getElementById('add-user-assign');
+  if (!select) return;
+
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">Myself (Admin)</option>';
+  users.forEach(u => {
+    if (u.id !== AppState.currentUser?.user_id) {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = `${u.username} (${u.display_name || u.role}) — ${u.total_proxies || 0} proxies`;
+      select.appendChild(opt);
+    }
+  });
+  if (currentVal) select.value = currentVal;
+}
+
+function filterAdminUserList() {
+  const query = (document.getElementById('admin-search-users')?.value || '').trim().toLowerCase();
+  renderAdminUsersTable(query);
+}
+
+function renderAdminUsersTable(searchFilter = '') {
+  const tbody = document.getElementById('admin-users-tbody');
+  if (!tbody) return;
+
+  let list = AppState.adminUsers || [];
+  if (searchFilter) {
+    list = list.filter(u =>
+      u.username.toLowerCase().includes(searchFilter) ||
+      (u.display_name && u.display_name.toLowerCase().includes(searchFilter)) ||
+      u.role.toLowerCase().includes(searchFilter)
+    );
+  }
+
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text-muted);">No users match your search.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list.map(u => {
+    const isActive = u.active === 'TRUE' || u.active === true;
+    const initial = (u.username || 'U').charAt(0).toUpperCase();
+    const isSelf = AppState.currentUser && (u.id === AppState.currentUser.user_id || u.username === AppState.currentUser.username);
+
+    const total = u.total_proxies || 0;
+    const avail = u.available_proxies || 0;
+    const used = u.used_proxies || 0;
+
+    return `
+      <tr>
+        <td>
+          <div class="user-identity">
+            <div class="user-avatar-circle">${escapeHtml(initial)}</div>
+            <div class="user-names-group">
+              <span class="user-uname">${escapeHtml(u.username)} ${isSelf ? '<span class="text-xs text-muted">(You)</span>' : ''}</span>
+              <span class="user-dname">${escapeHtml(u.display_name || 'No display name')}</span>
+            </div>
+          </div>
+        </td>
+        <td>
+          <span class="badge ${u.role === 'admin' ? 'badge-primary' : 'badge-neutral'}">${escapeHtml(u.role)}</span>
+        </td>
+        <td>
+          <span class="badge ${isActive ? 'badge-success' : 'badge-danger'}">
+            ${isActive ? '🟢 Active' : '🔴 Disabled'}
+          </span>
+        </td>
+        <td>
+          <div class="proxy-stats-group" title="Total: ${total} | Available: ${avail} | Used: ${used}">
+            <span class="proxy-pill pill-total" title="Total Proxies">Total: ${total}</span>
+            <span class="proxy-pill pill-avail" title="Available Proxies">🟢 ${avail}</span>
+            <span class="proxy-pill pill-used" title="Used Proxies">🔴 ${used}</span>
+          </div>
+        </td>
+        <td style="text-align:right;">
+          <div class="table-action-btns">
+            <button class="btn-tbl-action btn-pass" onclick="openChangePasswordModal('${escapeAttr(u.id)}', '${escapeAttr(u.username)}')" title="Change or Reset Password">
+              🔑 Set Pass
+            </button>
+            <button class="btn-tbl-action btn-add-for-user" onclick="adminAssignProxiesToUser('${escapeAttr(u.id)}', '${escapeAttr(u.username)}')" title="Add proxies directly for this user">
+              ➕ Add Proxies
+            </button>
+            ${!isSelf ? `
+              <button class="btn-tbl-action ${isActive ? 'btn-toggle-deact' : 'btn-toggle-act'}" onclick="toggleAdminUserStatus('${escapeAttr(u.id)}', ${isActive})" title="${isActive ? 'Disable user access' : 'Activate user'}">
+                ${isActive ? '⛔ Disable' : '✓ Enable'}
+              </button>
+            ` : ''}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ── Auto-Generate Password Helper ──────────────────────────────
+function autoGeneratePassword(targetInputId) {
+  const prefixes = ['Inexra', 'Proxy', 'Node', 'Secure', 'Host'];
+  const symbols = ['#', '!', '$', '@', '&'];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const symbol = symbols[Math.floor(Math.random() * symbols.length)];
+  const num = Math.floor(1000 + Math.random() * 9000);
+  const generated = `${prefix}${symbol}${num}`;
+
+  const el = document.getElementById(targetInputId);
+  if (el) {
+    el.value = generated;
+    el.type = 'text';
+    el.focus();
+    el.select();
+    showToast(`🎲 Generated password: ${generated}`, 'info');
+  }
+}
+
+function togglePassVisibility(inputId, btnEl) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  if (el.type === 'password') {
+    el.type = 'text';
+    if (btnEl) btnEl.textContent = '🙈';
+  } else {
+    el.type = 'password';
+    if (btnEl) btnEl.textContent = '👁';
+  }
+}
+
+// ── Submit Create New User ──────────────────────────────────────
+async function submitAdminCreateUser(e) {
+  e.preventDefault();
+
+  const username = document.getElementById('new-username').value.trim();
+  const displayName = document.getElementById('new-display-name').value.trim();
+  const role = document.getElementById('new-role').value;
+  const password = document.getElementById('new-password').value;
+
+  if (!username || username.length < 3) {
+    showToast('Username must be at least 3 characters.', 'error');
+    return;
+  }
+  if (!password || password.length < 4) {
+    showToast('Password must be at least 4 characters.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-create-user-submit');
+  const btnText = document.getElementById('btn-create-user-text');
+  btn.disabled = true;
+  btnText.textContent = 'Creating…';
+
+  try {
+    const res = await API.adminCreateUser({
+      username,
+      display_name: displayName,
+      role,
+      password
+    });
+
+    if (res.success) {
+      // Save credentials for instant copying
+      AppState.createdUserCreds = {
+        username,
+        password,
+        role,
+        displayName: displayName || username
+      };
+
+      // Show banner
+      document.getElementById('created-cred-username').textContent = username;
+      document.getElementById('created-cred-password').textContent = password;
+      const roleBadge = document.getElementById('created-cred-role');
+      roleBadge.textContent = role === 'admin' ? 'Administrator' : 'Standard User';
+      roleBadge.className = `badge ${role === 'admin' ? 'badge-primary' : 'badge-neutral'}`;
+
+      const banner = document.getElementById('new-creds-banner');
+      if (banner) banner.classList.remove('hidden');
+
+      // Reset form fields
+      document.getElementById('new-username').value = '';
+      document.getElementById('new-display-name').value = '';
+      document.getElementById('new-password').value = '';
+
+      showToast(`✓ User account @${username} created successfully!`, 'success');
+      await loadAdminUsers();
+    } else {
+      showToast(res.message || 'Failed to create user.', 'error');
+    }
+  } catch (err) {
+    console.error('Error creating user:', err);
+    showToast(err.message || 'Failed to create user account.', 'error');
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = '➕ Create Account';
+  }
+}
+
+function copyCreatedCredentials() {
+  if (!AppState.createdUserCreds) return;
+  const { username, password, role } = AppState.createdUserCreds;
+  const appUrl = window.location.origin + window.location.pathname.replace(/\/dashboard\.html$/, '/');
+
+  const text = [
+    `🔐 Proxy Collector for Inexra — Account Credentials`,
+    `----------------------------------------------------`,
+    `• Username : ${username}`,
+    `• Password : ${password}`,
+    `• Role     : ${role}`,
+    `• App URL  : ${appUrl}`,
+    `----------------------------------------------------`
+  ].join('\n');
+
+  copyTextToClipboard(text, `Login credentials for @${username} copied!`);
+}
+
+function dismissCredsBanner() {
+  const banner = document.getElementById('new-creds-banner');
+  if (banner) banner.classList.add('hidden');
+  AppState.createdUserCreds = null;
+}
+
+// ── Change Password Modal Handlers ─────────────────────────────
+function openChangePasswordModal(userId, username) {
+  const modal = document.getElementById('modal-change-pass');
+  if (!modal) return;
+
+  document.getElementById('change-pass-user-id').value = userId;
+  document.getElementById('change-pass-username-hidden').value = username;
+  document.getElementById('change-pass-subtitle').textContent = `Update credentials for @${username}`;
+
+  // Suggest a fresh password
+  autoGeneratePassword('change-pass-input');
+
+  modal.classList.remove('hidden');
+}
+
+async function submitAdminChangePassword(e) {
+  e.preventDefault();
+
+  const userId = document.getElementById('change-pass-user-id').value;
+  const username = document.getElementById('change-pass-username-hidden').value;
+  const password = document.getElementById('change-pass-input').value;
+
+  if (!password || password.length < 4) {
+    showToast('Password must be at least 4 characters.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-change-pass-submit');
+  const btnText = document.getElementById('btn-change-pass-text');
+  btn.disabled = true;
+  btnText.textContent = 'Saving…';
+
+  try {
+    const res = await API.adminChangePassword({ userId, password });
+    if (res.success) {
+      closeModal('modal-change-pass');
+
+      // Copy new credentials to clipboard automatically
+      const appUrl = window.location.origin + window.location.pathname.replace(/\/dashboard\.html$/, '/');
+      const credText = [
+        `🔑 Updated Password for Proxy Collector`,
+        `• Username : ${username}`,
+        `• Password : ${password}`,
+        `• App URL  : ${appUrl}`
+      ].join('\n');
+
+      await copyTextToClipboard(credText, `Password for @${username} updated & copied to clipboard!`);
+      showToast(`✓ Password for @${username} changed successfully!`, 'success');
+      await loadAdminUsers();
+    } else {
+      showToast(res.message || 'Failed to update password.', 'error');
+    }
+  } catch (err) {
+    console.error('Error changing password:', err);
+    showToast('Failed to update password.', 'error');
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = 'Save New Password';
+  }
+}
+
+// ── Toggle User Active / Inactive ──────────────────────────────
+async function toggleAdminUserStatus(userId, currentActive) {
+  const targetUser = AppState.adminUsers.find(u => u.id === userId);
+  const name = targetUser ? targetUser.username : 'this user';
+  const newActive = !currentActive;
+
+  try {
+    const res = await API.adminToggleUser({ userId, active: newActive });
+    if (res.success) {
+      showToast(`✓ Account for @${name} ${newActive ? 'activated' : 'disabled'}.`, 'success');
+      await loadAdminUsers();
+    } else {
+      showToast(res.message || 'Failed to update status.', 'error');
+    }
+  } catch (err) {
+    console.error('Error toggling user:', err);
+    showToast('Failed to toggle user status.', 'error');
+  }
+}
+
+// ── Admin Assign Proxies To User ───────────────────────────────
+function adminAssignProxiesToUser(userId, username) {
+  closeModal('modal-admin');
+  openAddBoxModal();
+
+  const group = document.getElementById('add-user-assign-group');
+  const select = document.getElementById('add-user-assign');
+  if (group) group.classList.remove('hidden');
+  if (select) select.value = userId;
+
+  showToast(`Assigning proxies to @${username}. Now select country, provider, and paste proxies.`, 'info');
+}
+
+// ── Clipboard Copy Helper ──────────────────────────────────────
+async function copyTextToClipboard(text, successToastMsg) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    if (successToastMsg) showToast(successToastMsg, 'success');
+    return true;
+  } catch (err) {
+    console.error('Failed to copy to clipboard:', err);
+    return false;
   }
 }
 
