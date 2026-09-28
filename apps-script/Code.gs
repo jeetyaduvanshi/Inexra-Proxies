@@ -172,33 +172,45 @@ function setupDatabase() {
   Logger.log('=== Database setup complete! ===');
 }
 
-function createInitialAdmin() {
-  var ADMIN_USERNAME     = 'admin';
-  var ADMIN_PASSWORD     = 'admin123';
-  var ADMIN_DISPLAY_NAME = 'Administrator';
+function setAdminPasswordAdmin123() {
+  resetAdminPassword();
+}
+
+function resetAdminPassword() {
+  var ADMIN_USERNAME = 'admin';
+  var NEW_PASSWORD   = 'admin123';
 
   try {
     var sheet = getOrCreateSheet(SHEET_USERS);
     var data  = sheet.getDataRange().getValues();
+    var hash  = hashPassword(NEW_PASSWORD);
+    var found = false;
 
     for (var i = 1; i < data.length; i++) {
-      if (String(data[i][1]).toLowerCase() === ADMIN_USERNAME.toLowerCase()) {
-        Logger.log('⚠️  User "' + ADMIN_USERNAME + '" already exists. Skipping.');
-        return;
+      if (String(data[i][UC.USERNAME]).toLowerCase().trim() === ADMIN_USERNAME.toLowerCase()) {
+        sheet.getRange(i + 1, UC.PASSWORD_HASH + 1).setValue(hash);
+        sheet.getRange(i + 1, UC.ACTIVE + 1).setValue('TRUE');
+        sheet.getRange(i + 1, UC.ROLE + 1).setValue('admin');
+        found = true;
+        Logger.log('✓ SUCCESS: Password for user "admin" has been set to: ' + NEW_PASSWORD);
+        Logger.log('✓ Account is ACTIVE and role is ADMIN');
+        break;
       }
     }
 
-    var id = 'U' + Utilities.formatDate(new Date(), 'UTC', 'yyMMddHHmmss');
-    var hash = hashPassword(ADMIN_PASSWORD);
-    var now = nowISO();
-
-    sheet.appendRow([id, ADMIN_USERNAME, hash, ADMIN_DISPLAY_NAME, 'admin', 'TRUE', now]);
-    Logger.log('✓ Admin account created successfully!');
-    Logger.log('  Username: ' + ADMIN_USERNAME);
-    Logger.log('  Password: ' + ADMIN_PASSWORD);
+    if (!found) {
+      var id = 'U' + Utilities.formatDate(new Date(), 'UTC', 'yyMMddHHmmss');
+      var now = nowISO();
+      sheet.appendRow([id, ADMIN_USERNAME, hash, 'Administrator', 'admin', 'TRUE', now]);
+      Logger.log('✓ SUCCESS: Created new user "admin" with password: ' + NEW_PASSWORD);
+    }
   } catch (e) {
-    Logger.log('❌ Error creating admin: ' + e.message);
+    Logger.log('❌ Error setting admin password: ' + e.message);
   }
+}
+
+function createInitialAdmin() {
+  resetAdminPassword();
 }
 
 function cleanAllSessions() {
