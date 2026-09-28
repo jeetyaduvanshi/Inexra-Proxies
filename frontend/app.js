@@ -108,6 +108,55 @@ function setupEventListeners() {
       customProviderGroup.classList.toggle('hidden', e.target.value !== 'CUSTOM');
     });
   }
+
+  // Native drag-to-copy handler: when user selects proxy lines with mouse and presses Ctrl+C
+  document.addEventListener('copy', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+
+    // Check if selection intersects any proxy-text-pane
+    const range = sel.getRangeAt(0);
+    const container = range.commonAncestorContainer;
+    const pane = (container.nodeType === 1 ? container : container.parentElement)?.closest('.proxy-text-pane');
+    if (!pane) return;
+
+    const rawText = sel.toString().trim();
+    if (!rawText) return;
+
+    // Match lines to proxies in AppState
+    const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const matchedIds = [];
+    lines.forEach(line => {
+      const match = AppState.proxies.find(p => p.status !== 'deleted' && (p.proxy.trim() === line || line.includes(p.proxy.trim())));
+      if (match && !matchedIds.includes(match.id)) {
+        matchedIds.push(match.id);
+      }
+    });
+
+    if (matchedIds.length > 0) {
+      const nowISO = new Date().toISOString();
+      matchedIds.forEach(id => {
+        const item = AppState.proxies.find(p => p.id === id);
+        if (item) {
+          item.status = 'used';
+          if (!item.used_at) item.used_at = nowISO;
+          item.last_copied_at = nowISO;
+          item.copy_count = (item.copy_count || 0) + 1;
+          AppState.recentlyCopiedIds.add(id);
+        }
+      });
+      updateHeaderStats();
+      renderBoxes();
+      showToast(`✓ Copied ${matchedIds.length} selected proxy/proxies!`, 'success');
+
+      setTimeout(() => {
+        matchedIds.forEach(id => AppState.recentlyCopiedIds.delete(id));
+        renderBoxes();
+      }, 2000);
+
+      API.copyMultipleProxies(matchedIds).catch(console.warn);
+    }
+  });
 }
 
 // ── Data Fetching ──────────────────────────────────────────────
@@ -480,77 +529,98 @@ function renderBoxHtml(group) {
         </div>
       </div>
 
-      <!-- Proxy List Rows with Serial Numbers -->
-      <div class="box-list">
-        ${displayProxies.length === 0 ? `
-          <div class="box-empty-hint">No proxies matching current filter.</div>
-        ` : displayProxies.map((p, idx) => renderProxyRowHtml(p, idx + 1)).join('')}
-      </div>
+      <!-- Unified Box Layout: Single Proxy Box + Outside Options -->
+      ${displayProxies.length === 0 ? `
+        <div class="box-empty-hint">No proxies matching current filter.</div>
+      ` : `
+        <div class="box-unified-table">
+          <!-- The ONE Unified Proxy Box (No lines in between, clean drag selection) -->
+          <div class="proxy-text-pane" id="pane-text-${escapeAttr(key)}" onscroll="syncPaneScroll('${escapeAttr(key)}', 'text')">
+            ${displayProxies.map((p, idx) => `
+              <div
+                class="p-line ${p.status === 'available' ? 'line-avail' : 'line-used'} ${AppState.recentlyCopiedIds.has(p.id) ? 'row-anim-copied' : ''}"
+                id="pline-${escapeAttr(p.id)}"
+                data-id="${escapeAttr(p.id)}"
+                onmouseenter="highlightRow('${escapeAttr(p.id)}', true)"
+                onmouseleave="highlightRow('${escapeAttr(p.id)}', false)"
+              >
+                <span class="p-serial">#${idx + 1}</span>
+                <span class="p-status-dot ${p.status === 'available' ? 'dot-avail' : 'dot-used'}" title="${p.status === 'available' ? 'Available' : 'Used'}"></span>
+                <span class="p-str mono" title="Click to copy" onclick="copySingleProxy('${escapeAttr(p.id)}')">${escapeHtml(p.proxy)}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <!-- Options Pane Outside the Box -->
+          <div class="proxy-options-pane" id="pane-opts-${escapeAttr(key)}" onscroll="syncPaneScroll('${escapeAttr(key)}', 'opts')">
+            ${displayProxies.map((p, idx) => {
+              const isSelected = AppState.selectedIds.has(p.id);
+              const copyCount = p.copy_count || 0;
+              return `
+                <div
+                  class="p-opts-row"
+                  id="popts-${escapeAttr(p.id)}"
+                  onmouseenter="highlightRow('${escapeAttr(p.id)}', true)"
+                  onmouseleave="highlightRow('${escapeAttr(p.id)}', false)"
+                >
+                  <input
+                    type="checkbox"
+                    class="proxy-checkbox"
+                    ${isSelected ? 'checked' : ''}
+                    onchange="toggleProxySelection('${escapeAttr(p.id)}', this.checked)"
+                    title="Select #${idx + 1}"
+                  />
+                  <span class="meta-copied-count ${copyCount > 0 ? 'highlight' : ''}" title="Total times copied">
+                    ${copyCount > 0 ? `Copied ${copyCount}×` : 'Copied 0×'}
+                  </span>
+                  <div class="proxy-row-btns">
+                    <button class="btn-row-action btn-row-copy" onclick="copySingleProxy('${escapeAttr(p.id)}')" title="Copy #${idx + 1} and mark as Used">
+                      📋 Copy
+                    </button>
+                    <button class="btn-row-action btn-row-reset" onclick="resetSingleProxy('${escapeAttr(p.id)}')" title="Reset to Available and 0 copies">
+                      ↺
+                    </button>
+                    <button class="btn-row-action btn-row-del" onclick="deleteSingleProxy('${escapeAttr(p.id)}')" title="Delete this proxy">
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `}
     </div>
   `;
 }
 
-function renderProxyRowHtml(p, serialNum = 1) {
-  const isAvailable = p.status === 'available';
-  const isSelected = AppState.selectedIds.has(p.id);
-  const isRecent = AppState.recentlyCopiedIds.has(p.id);
+// ── Hover Sync & Scroll Sync for Unified Table ─────────────────
+function highlightRow(id, isHover) {
+  const lineEl = document.getElementById(`pline-${id}`);
+  const optsEl = document.getElementById(`popts-${id}`);
+  if (lineEl) lineEl.classList.toggle('row-hovered', isHover);
+  if (optsEl) optsEl.classList.toggle('row-hovered', isHover);
+}
 
-  // Formatted date
-  const usedTimeFormatted = p.used_at ? formatTimeShort(p.used_at) : '';
-  const copyCount = p.copy_count || 0;
+const syncScrollLocks = new Set();
+function syncPaneScroll(key, source) {
+  if (syncScrollLocks.has(key)) return;
+  syncScrollLocks.add(key);
 
-  return `
-    <div class="proxy-row ${isAvailable ? 'row-avail' : 'row-used'} ${isRecent ? 'row-anim-copied' : ''}" id="prow-${escapeAttr(p.id)}">
-      <!-- Left: Checkbox + Serial # + Status dot + Proxy String -->
-      <div class="proxy-row-left">
-        <input
-          type="checkbox"
-          class="proxy-checkbox"
-          ${isSelected ? 'checked' : ''}
-          onchange="toggleProxySelection('${escapeAttr(p.id)}', this.checked)"
-          title="Select proxy"
-        />
+  const textPane = document.getElementById(`pane-text-${key}`);
+  const optsPane = document.getElementById(`pane-opts-${key}`);
 
-        <span class="proxy-serial" title="Serial #${serialNum}">#${serialNum}</span>
+  if (textPane && optsPane) {
+    if (source === 'text') {
+      optsPane.scrollTop = textPane.scrollTop;
+    } else {
+      textPane.scrollTop = optsPane.scrollTop;
+    }
+  }
 
-        <span class="status-indicator ${isAvailable ? 'status-avail' : 'status-used'}" title="${isAvailable ? 'Available' : 'Used'}">
-          ${isAvailable ? '🟢 Avail' : '🔴 Used'}
-        </span>
-
-        <span class="proxy-string mono" title="Click to copy" onclick="copySingleProxy('${escapeAttr(p.id)}')">
-          ${escapeHtml(p.proxy)}
-        </span>
-      </div>
-
-      <!-- Right: Copied Count + Used Time right in front of proxy + Action buttons -->
-      <div class="proxy-row-right">
-        <div class="proxy-meta-info">
-          <span class="meta-copied-count ${copyCount > 0 ? 'highlight' : ''}" title="Total times copied">
-            ${copyCount > 0 ? `Copied ${copyCount}×` : 'Copied 0×'}
-          </span>
-          ${usedTimeFormatted ? `
-            <span class="meta-used-time" title="Last used timestamp: ${escapeAttr(p.used_at)}">
-              Used: ${usedTimeFormatted}
-            </span>
-          ` : `
-            <span class="meta-used-time text-muted">—</span>
-          `}
-        </div>
-
-        <div class="proxy-row-btns">
-          <button class="btn-row-action btn-row-copy" onclick="copySingleProxy('${escapeAttr(p.id)}')" title="Copy proxy and mark as Used">
-            📋 Copy
-          </button>
-          <button class="btn-row-action btn-row-reset" onclick="resetSingleProxy('${escapeAttr(p.id)}')" title="Reset to Available and 0 copies">
-            ↺
-          </button>
-          <button class="btn-row-action btn-row-del" onclick="deleteSingleProxy('${escapeAttr(p.id)}')" title="Delete this proxy">
-            🗑
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
+  requestAnimationFrame(() => {
+    syncScrollLocks.delete(key);
+  });
 }
 
 // ── Time Formatting ────────────────────────────────────────────
