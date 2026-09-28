@@ -676,7 +676,7 @@ var ProxyService = (function() {
   function copyProxy(proxyId, userId) {
     var lock = LockService.getScriptLock();
     try {
-      lock.waitLock(10000);
+      lock.waitLock(8000);
       var sheet  = getSheet(SHEET_PROXIES);
       var rowIdx = findRowIndex(sheet, PC.ID, proxyId);
       if (rowIdx < 0) throw new Error('Proxy not found.');
@@ -692,24 +692,98 @@ var ProxyService = (function() {
       var now2 = nowISO();
       var currentCount = Number(rowData[PC.COPY_COUNT]) || 0;
       var newCount = currentCount + 1;
+      var usedAt = rowData[PC.USED_AT] ? String(rowData[PC.USED_AT]) : now2;
 
-      sheet.getRange(rowIdx, PC.STATUS + 1).setValue('used');
-      if (!rowData[PC.USED_AT]) {
-        sheet.getRange(rowIdx, PC.USED_AT + 1).setValue(now2);
-      }
-      sheet.getRange(rowIdx, PC.LAST_COPIED_AT + 1).setValue(now2);
-      sheet.getRange(rowIdx, PC.COPY_COUNT + 1).setValue(newCount);
+      // Single range write for all 5 columns (STATUS, CREATED_AT, USED_AT, LAST_COPIED_AT, COPY_COUNT)
+      sheet.getRange(rowIdx, PC.STATUS + 1, 1, 5).setValues([
+        ['used', String(rowData[PC.CREATED_AT]), usedAt, now2, newCount]
+      ]);
 
       return {
         id:             proxyId,
         status:         'used',
         copy_count:     newCount,
-        used_at:        now2,
+        used_at:        usedAt,
         last_copied_at: now2,
         proxy:          String(rowData[PC.PROXY]),
         provider:       String(rowData[PC.PROVIDER]),
         country:        String(rowData[PC.COUNTRY])
       };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  function copyMultiple(proxyIds, userId) {
+    if (!proxyIds || !proxyIds.length) return [];
+    var lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(10000);
+      var sheet = getSheet(SHEET_PROXIES);
+      var data  = sheet.getDataRange().getValues();
+      if (data.length < 2) return [];
+
+      var targetSet = {};
+      for (var i = 0; i < proxyIds.length; i++) {
+        targetSet[String(proxyIds[i]).trim()] = true;
+      }
+
+      var now2 = nowISO();
+      var updated = [];
+      var activityBatch = [];
+
+      for (var r = 1; r < data.length; r++) {
+        var row = data[r];
+        var pid = String(row[PC.ID]).trim();
+        if (!targetSet[pid]) continue;
+        if (String(row[PC.STATUS]) === 'deleted') continue;
+        if (String(row[PC.USER_ID]) !== String(userId)) continue;
+
+        var currentCount = Number(row[PC.COPY_COUNT]) || 0;
+        var newCount = currentCount + 1;
+        var usedAt = row[PC.USED_AT] ? String(row[PC.USED_AT]) : now2;
+        var rowNum = r + 1;
+
+        // Single range write for this row
+        sheet.getRange(rowNum, PC.STATUS + 1, 1, 5).setValues([
+          ['used', String(row[PC.CREATED_AT]), usedAt, now2, newCount]
+        ]);
+
+        var pObj = {
+          id:             pid,
+          status:         'used',
+          copy_count:     newCount,
+          used_at:        usedAt,
+          last_copied_at: now2,
+          proxy:          String(row[PC.PROXY]),
+          provider:       String(row[PC.PROVIDER]),
+          country:        String(row[PC.COUNTRY])
+        };
+        updated.push(pObj);
+
+        activityBatch.push([
+          generateActivityId(),
+          userId,
+          pid,
+          'COPY_PROXY',
+          now2,
+          pObj.country,
+          pObj.provider,
+          pObj.proxy
+        ]);
+      }
+
+      // Batch write all activity logs in 1 single API call
+      if (activityBatch.length > 0) {
+        try {
+          var actSheet = getSheet(SHEET_ACTIVITY);
+          actSheet.getRange(actSheet.getLastRow() + 1, 1, activityBatch.length, activityBatch[0].length).setValues(activityBatch);
+        } catch (e) {
+          Logger.log('Activity batch error: ' + e.message);
+        }
+      }
+
+      return updated;
     } finally {
       lock.releaseLock();
     }
@@ -725,11 +799,66 @@ var ProxyService = (function() {
       throw new Error('Access denied.');
     }
 
-    sheet.getRange(rowIdx, PC.STATUS + 1).setValue('available');
-    sheet.getRange(rowIdx, PC.USED_AT + 1).setValue('');
-    sheet.getRange(rowIdx, PC.LAST_COPIED_AT + 1).setValue('');
+    sheet.getRange(rowIdx, PC.STATUS + 1, 1, 5).setValues([
+      ['available', String(rowData[PC.CREATED_AT]), '', '', 0]
+    ]);
 
     return { id: proxyId, status: 'available' };
+  }
+
+  function resetMultiple(proxyIds, userId, isAdmin) {
+    if (!proxyIds || !proxyIds.length) return [];
+    var lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(10000);
+      var sheet = getSheet(SHEET_PROXIES);
+      var data  = sheet.getDataRange().getValues();
+      if (data.length < 2) return [];
+
+      var targetSet = {};
+      for (var i = 0; i < proxyIds.length; i++) {
+        targetSet[String(proxyIds[i]).trim()] = true;
+      }
+
+      var now2 = nowISO();
+      var updated = [];
+      var activityBatch = [];
+
+      for (var r = 1; r < data.length; r++) {
+        var row = data[r];
+        var pid = String(row[PC.ID]).trim();
+        if (!targetSet[pid]) continue;
+        if (!isAdmin && String(row[PC.USER_ID]) !== String(userId)) continue;
+
+        var rowNum = r + 1;
+        sheet.getRange(rowNum, PC.STATUS + 1, 1, 5).setValues([
+          ['available', String(row[PC.CREATED_AT]), '', '', 0]
+        ]);
+
+        updated.push({ id: pid, status: 'available' });
+        activityBatch.push([
+          generateActivityId(),
+          userId,
+          pid,
+          'RESET_PROXY',
+          now2,
+          String(row[PC.COUNTRY]),
+          String(row[PC.PROVIDER]),
+          String(row[PC.PROXY])
+        ]);
+      }
+
+      if (activityBatch.length > 0) {
+        try {
+          var actSheet = getSheet(SHEET_ACTIVITY);
+          actSheet.getRange(actSheet.getLastRow() + 1, 1, activityBatch.length, activityBatch[0].length).setValues(activityBatch);
+        } catch (e) {}
+      }
+
+      return updated;
+    } finally {
+      lock.releaseLock();
+    }
   }
 
   function deleteProxy(proxyId, userId, isAdmin) {
@@ -744,6 +873,59 @@ var ProxyService = (function() {
 
     sheet.getRange(rowIdx, PC.STATUS + 1).setValue('deleted');
     return { id: proxyId };
+  }
+
+  function deleteMultiple(proxyIds, userId, isAdmin) {
+    if (!proxyIds || !proxyIds.length) return 0;
+    var lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(10000);
+      var sheet = getSheet(SHEET_PROXIES);
+      var data  = sheet.getDataRange().getValues();
+      if (data.length < 2) return 0;
+
+      var targetSet = {};
+      for (var i = 0; i < proxyIds.length; i++) {
+        targetSet[String(proxyIds[i]).trim()] = true;
+      }
+
+      var now2 = nowISO();
+      var count = 0;
+      var activityBatch = [];
+
+      for (var r = 1; r < data.length; r++) {
+        var row = data[r];
+        var pid = String(row[PC.ID]).trim();
+        if (!targetSet[pid]) continue;
+        if (!isAdmin && String(row[PC.USER_ID]) !== String(userId)) continue;
+
+        var rowNum = r + 1;
+        sheet.getRange(rowNum, PC.STATUS + 1).setValue('deleted');
+        count++;
+
+        activityBatch.push([
+          generateActivityId(),
+          userId,
+          pid,
+          'DELETE_PROXY',
+          now2,
+          String(row[PC.COUNTRY]),
+          String(row[PC.PROVIDER]),
+          String(row[PC.PROXY])
+        ]);
+      }
+
+      if (activityBatch.length > 0) {
+        try {
+          var actSheet = getSheet(SHEET_ACTIVITY);
+          actSheet.getRange(actSheet.getLastRow() + 1, 1, activityBatch.length, activityBatch[0].length).setValues(activityBatch);
+        } catch (e) {}
+      }
+
+      return count;
+    } finally {
+      lock.releaseLock();
+    }
   }
 
   // Handlers
@@ -801,16 +983,12 @@ var ProxyService = (function() {
     if (!user) return errorResponse('Unauthorized', 401);
     var proxyIds = body.proxyIds;
     if (!proxyIds || !proxyIds.length) return errorResponse('proxyIds array is required.', 400);
-    var updated = [];
-    for (var i = 0; i < proxyIds.length; i++) {
-      try {
-        var pid = sanitizeStr(proxyIds[i]);
-        var res = copyProxy(pid, user.id);
-        ActivityService.logActivity(user.id, pid, 'COPY_PROXY', res.country, res.provider, res.proxy);
-        updated.push(res);
-      } catch (err) {}
+    try {
+      var updated = copyMultiple(proxyIds, user.id);
+      return successResponse({ count: updated.length, proxies: updated }, updated.length + ' proxy/proxies copied.');
+    } catch (e) {
+      return errorResponse(e.message, 400);
     }
-    return successResponse({ count: updated.length, proxies: updated }, updated.length + ' proxy/proxies copied and marked as used.');
   }
 
   function handleResetProxy(token, body) {
@@ -830,16 +1008,12 @@ var ProxyService = (function() {
     if (!user) return errorResponse('Unauthorized', 401);
     var proxyIds = body.proxyIds;
     if (!proxyIds || !proxyIds.length) return errorResponse('proxyIds array is required.', 400);
-    var updated = [];
-    for (var i = 0; i < proxyIds.length; i++) {
-      try {
-        var pid = sanitizeStr(proxyIds[i]);
-        var res = resetProxy(pid, user.id, user.role === 'admin');
-        ActivityService.logActivity(user.id, pid, 'RESET_PROXY', '', '', '');
-        updated.push(res);
-      } catch (err) {}
+    try {
+      var updated = resetMultiple(proxyIds, user.id, user.role === 'admin');
+      return successResponse({ count: updated.length, proxies: updated }, updated.length + ' proxy/proxies reset.');
+    } catch (e) {
+      return errorResponse(e.message, 400);
     }
-    return successResponse({ count: updated.length, proxies: updated }, updated.length + ' proxy/proxies reset.');
   }
 
   function handleDeleteProxy(token, body) {
@@ -859,16 +1033,12 @@ var ProxyService = (function() {
     if (!user) return errorResponse('Unauthorized', 401);
     var proxyIds = body.proxyIds;
     if (!proxyIds || !proxyIds.length) return errorResponse('proxyIds array is required.', 400);
-    var count = 0;
-    for (var i = 0; i < proxyIds.length; i++) {
-      try {
-        var pid = sanitizeStr(proxyIds[i]);
-        deleteProxy(pid, user.id, user.role === 'admin');
-        ActivityService.logActivity(user.id, pid, 'DELETE_PROXY', '', '', '');
-        count++;
-      } catch (err) {}
+    try {
+      var count = deleteMultiple(proxyIds, user.id, user.role === 'admin');
+      return successResponse({ count: count }, count + ' proxy/proxies deleted.');
+    } catch (e) {
+      return errorResponse(e.message, 400);
     }
-    return successResponse({ count: count }, count + ' proxy/proxies deleted.');
   }
 
   function handleAdminGetProxies(token, body) {

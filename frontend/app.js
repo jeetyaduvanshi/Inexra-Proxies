@@ -572,10 +572,10 @@ async function executeCopyAndMarkUsed(ids, strings, label) {
   const clipText = strings.join('\n');
 
   try {
+    // 1. Instant Clipboard Write (<5ms)
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(clipText);
     } else {
-      // Fallback for non-https or older browser context
       const ta = document.createElement('textarea');
       ta.value = clipText;
       ta.style.position = 'fixed';
@@ -586,20 +586,13 @@ async function executeCopyAndMarkUsed(ids, strings, label) {
       document.body.removeChild(ta);
     }
 
-    // Call API to mark as used
-    if (ids.length === 1) {
-      await API.copyProxy(ids[0]);
-    } else {
-      await API.copyMultipleProxies(ids);
-    }
-
-    // Optimistically update local state so UI updates instantly
+    // 2. INSTANT Optimistic UI Update (Immediate visual response, 0ms delay!)
     const nowISO = new Date().toISOString();
     ids.forEach(id => {
       const item = AppState.proxies.find(p => p.id === id);
       if (item) {
         item.status = 'used';
-        item.used_at = nowISO;
+        if (!item.used_at) item.used_at = nowISO;
         item.last_copied_at = nowISO;
         item.copy_count = (item.copy_count || 0) + 1;
         AppState.recentlyCopiedIds.add(id);
@@ -609,13 +602,23 @@ async function executeCopyAndMarkUsed(ids, strings, label) {
     updateHeaderStats();
     renderBoxes();
 
-    // Pulse animation clear after 2 seconds
+    // Instant toast feedback
+    showToast(`✓ Copied ${label} to clipboard!`, 'success');
+
+    // Remove pulse animation after 2s
     setTimeout(() => {
       ids.forEach(id => AppState.recentlyCopiedIds.delete(id));
       renderBoxes();
-    }, 2500);
+    }, 2000);
 
-    showToast(`✓ Copied ${label} to clipboard and marked as Used!`, 'success');
+    // 3. Fire backend API in background (Non-blocking: user does not wait!)
+    const apiCall = (ids.length === 1)
+      ? API.copyProxy(ids[0])
+      : API.copyMultipleProxies(ids);
+
+    apiCall.catch(err => {
+      console.warn('Background copy sync notice:', err);
+    });
 
   } catch (err) {
     console.error('Failed to copy to clipboard:', err);
@@ -625,23 +628,24 @@ async function executeCopyAndMarkUsed(ids, strings, label) {
 
 // ── Reset & Delete Handlers ────────────────────────────────────
 async function resetSingleProxy(proxyId) {
+  // Optimistically update UI immediately
+  const item = AppState.proxies.find(p => p.id === proxyId);
+  if (item) {
+    item.status = 'available';
+    item.used_at = '';
+  }
+  updateHeaderStats();
+  renderBoxes();
+  showToast('Proxy reset to Available.', 'success');
+
+  // Background sync
   try {
     const res = await API.resetProxy(proxyId);
-    if (res.success) {
-      const item = AppState.proxies.find(p => p.id === proxyId);
-      if (item) {
-        item.status = 'available';
-        item.used_at = '';
-      }
-      updateHeaderStats();
-      renderBoxes();
-      showToast('Proxy reset to Available.', 'success');
-    } else {
-      showToast(res.message || 'Failed to reset proxy.', 'error');
+    if (!res.success) {
+      console.warn('Reset background sync warning:', res.message);
     }
   } catch (err) {
-    console.error('Reset error:', err);
-    showToast('Failed to reset proxy.', 'error');
+    console.warn('Reset background sync error:', err);
   }
 }
 
@@ -650,40 +654,46 @@ async function resetSelectedInBox(boxKey) {
   if (selected.length === 0) return;
 
   const ids = selected.map(p => p.id);
+
+  // Optimistically update UI immediately
+  ids.forEach(id => {
+    const item = AppState.proxies.find(p => p.id === id);
+    if (item) {
+      item.status = 'available';
+      item.used_at = '';
+    }
+    AppState.selectedIds.delete(id);
+  });
+  updateHeaderStats();
+  renderBoxes();
+  showToast(`✓ ${ids.length} proxies reset to Available.`, 'success');
+
+  // Background sync
   try {
     await API.resetMultipleProxies(ids);
-    ids.forEach(id => {
-      const item = AppState.proxies.find(p => p.id === id);
-      if (item) {
-        item.status = 'available';
-        item.used_at = '';
-      }
-      AppState.selectedIds.delete(id);
-    });
-    updateHeaderStats();
-    renderBoxes();
-    showToast(`✓ ${ids.length} proxies reset to Available.`, 'success');
   } catch (err) {
-    showToast('Failed to reset selected proxies.', 'error');
+    console.warn('Reset multiple background sync error:', err);
   }
 }
 
 async function deleteSingleProxy(proxyId) {
   if (!confirm('Are you sure you want to delete this proxy?')) return;
 
+  // Optimistically update UI immediately
+  AppState.proxies = AppState.proxies.filter(p => p.id !== proxyId);
+  AppState.selectedIds.delete(proxyId);
+  updateHeaderStats();
+  renderBoxes();
+  showToast('Proxy deleted.', 'success');
+
+  // Background sync
   try {
     const res = await API.deleteProxy(proxyId);
-    if (res.success) {
-      AppState.proxies = AppState.proxies.filter(p => p.id !== proxyId);
-      AppState.selectedIds.delete(proxyId);
-      updateHeaderStats();
-      renderBoxes();
-      showToast('Proxy deleted.', 'success');
-    } else {
-      showToast(res.message || 'Failed to delete proxy.', 'error');
+    if (!res.success) {
+      console.warn('Delete background sync warning:', res.message);
     }
   } catch (err) {
-    showToast('Failed to delete proxy.', 'error');
+    console.warn('Delete background sync error:', err);
   }
 }
 
