@@ -402,61 +402,11 @@ function renderBoxHtml(group) {
         </div>
 
         <div class="bulk-copy-group">
-          <button class="btn btn-xs btn-copy-bulk" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', 1)" ${availInBox === 0 ? 'disabled' : ''} title="Copy 1 available proxy and mark as used">
-            📋 Copy 1
+          <button class="btn btn-xs btn-copy-bulk" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', 5)" ${availInBox === 0 ? 'disabled' : ''} title="Copy next 5 available proxies and mark as used">
+            📋 Copy Next 5
           </button>
-          <button class="btn btn-xs btn-copy-bulk" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', 5)" ${availInBox === 0 ? 'disabled' : ''} title="Copy 5 available proxies and mark as used">
-            📋 Copy 5
-          </button>
-          <button class="btn btn-xs btn-copy-bulk" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', 10)" ${availInBox === 0 ? 'disabled' : ''} title="Copy 10 available proxies and mark as used">
-            📋 Copy 10
-          </button>
-          <button class="btn btn-xs btn-copy-bulk btn-copy-all" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', ${availInBox})" ${availInBox === 0 ? 'disabled' : ''} title="Copy all available proxies in this box">
-            📋 Copy All (${availInBox})
-          </button>
-        </div>
-      </div>
-
-      <!-- Range Copy Bar (Specify Serial Number Range) -->
-      <div class="box-range-bar">
-        <span class="range-label">Range Copy:</span>
-        <div class="range-inputs-group">
-          <span class="range-prefix">#</span>
-          <input
-            type="number"
-            id="range-from-${escapeAttr(key)}"
-            class="range-input"
-            min="1"
-            max="${displayProxies.length || 1}"
-            value="1"
-            placeholder="1"
-          />
-          <span class="range-sep">to</span>
-          <span class="range-prefix">#</span>
-          <input
-            type="number"
-            id="range-to-${escapeAttr(key)}"
-            class="range-input"
-            min="1"
-            max="${displayProxies.length || 1}"
-            value="${Math.min(5, displayProxies.length || 1)}"
-            placeholder="${Math.min(5, displayProxies.length || 1)}"
-          />
-          <button
-            class="btn btn-xs btn-range-copy"
-            onclick="copyRangeInBox('${escapeAttr(key)}')"
-            ${displayProxies.length === 0 ? 'disabled' : ''}
-            title="Copy proxies in this serial range and mark as used"
-          >
-            📋 Copy Range
-          </button>
-          <button
-            class="btn btn-xs btn-range-select"
-            onclick="selectRangeInBox('${escapeAttr(key)}')"
-            ${displayProxies.length === 0 ? 'disabled' : ''}
-            title="Select proxies in this serial range"
-          >
-            ☑ Select Range
+          <button class="btn btn-xs btn-copy-bulk" onclick="copyNextInBox('${escapeAttr(country)}', '${escapeAttr(provider)}', 10)" ${availInBox === 0 ? 'disabled' : ''} title="Copy next 10 available proxies and mark as used">
+            📋 Copy Next 10
           </button>
         </div>
       </div>
@@ -665,7 +615,7 @@ async function copyNextInBox(country, provider, count) {
   const ids = toCopy.map(p => p.id);
   const strings = toCopy.map(p => p.proxy.trim());
 
-  await executeCopyAndMarkUsed(ids, strings, `${toCopy.length} proxy/proxies`);
+  await executeCopyAndMarkUsed(ids, strings, `${toCopy.length === 1 ? '1 proxy' : `${toCopy.length} proxies`}`);
 }
 
 /**
@@ -780,77 +730,6 @@ function getBoxDisplayProxies(boxKey) {
     );
   }
   return proxies;
-}
-
-// ── Range Copy & Range Select ──────────────────────────────────
-/**
- * Copy a serial-number range of proxies (e.g. #1 to #5) from a box
- */
-async function copyRangeInBox(boxKey) {
-  const list = getBoxDisplayProxies(boxKey);
-  if (list.length === 0) {
-    showToast('No proxies to copy in this box.', 'error');
-    return;
-  }
-
-  const fromInput = document.getElementById(`range-from-${boxKey}`);
-  const toInput = document.getElementById(`range-to-${boxKey}`);
-
-  let fromVal = parseInt(fromInput ? fromInput.value : '1', 10);
-  let toVal = parseInt(toInput ? toInput.value : '1', 10);
-
-  if (isNaN(fromVal) || fromVal < 1) fromVal = 1;
-  if (isNaN(toVal) || toVal < 1) toVal = 1;
-  if (fromVal > list.length) fromVal = list.length;
-  if (toVal > list.length) toVal = list.length;
-
-  if (fromVal > toVal) {
-    const tmp = fromVal;
-    fromVal = toVal;
-    toVal = tmp;
-  }
-
-  const slice = list.slice(fromVal - 1, toVal);
-  if (slice.length === 0) {
-    showToast('Invalid range selected.', 'error');
-    return;
-  }
-
-  const ids = slice.map(p => p.id);
-  const strings = slice.map(p => p.proxy.trim());
-
-  await executeCopyAndMarkUsed(ids, strings, `range #${fromVal}–#${toVal} (${slice.length} proxies)`);
-}
-
-/**
- * Select a serial-number range of proxies in a box
- */
-function selectRangeInBox(boxKey) {
-  const list = getBoxDisplayProxies(boxKey);
-  if (list.length === 0) return;
-
-  const fromInput = document.getElementById(`range-from-${boxKey}`);
-  const toInput = document.getElementById(`range-to-${boxKey}`);
-
-  let fromVal = parseInt(fromInput ? fromInput.value : '1', 10);
-  let toVal = parseInt(toInput ? toInput.value : '1', 10);
-
-  if (isNaN(fromVal) || fromVal < 1) fromVal = 1;
-  if (isNaN(toVal) || toVal < 1) toVal = 1;
-  if (fromVal > list.length) fromVal = list.length;
-  if (toVal > list.length) toVal = list.length;
-
-  if (fromVal > toVal) {
-    const tmp = fromVal;
-    fromVal = toVal;
-    toVal = tmp;
-  }
-
-  const slice = list.slice(fromVal - 1, toVal);
-  slice.forEach(p => AppState.selectedIds.add(p.id));
-
-  renderBoxes();
-  showToast(`Selected range #${fromVal} to #${toVal} (${slice.length} proxies).`, 'info');
 }
 
 // ── Reset Handlers (Always Reset Copy Count to 0) ──────────────
